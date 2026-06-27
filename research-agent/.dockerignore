@@ -1,0 +1,37 @@
+# Environment
+.env
+*.env
+
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated (will be created at runtime via volumes)
+output/
+chroma_db/
+
+# Tests
+tests/
+
+# Docs
+README.md

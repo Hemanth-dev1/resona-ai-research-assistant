@@ -1,0 +1,168 @@
+"""Pydantic models for typed agent outputs.
+
+Every agent output is parsed into a structured Pydantic model after generation.
+This catches hallucinated structure and enables type-safe validation before
+content reaches the user or downstream agents.
+
+Models:
+    - ResearchFinding: A single sourced finding from research
+    - ResearchBrief: Structured output from the researcher agent
+    - ThemeAnalysis: A key theme identified by the analyst
+    - Analysis: Structured output from the analyst agent
+    - ReportSection: A section of the final report
+    - ResearchReport: Complete structured report
+    - CritiqueScore: Scored evaluation from the critic loop
+"""
+
+from datetime import datetime
+from enum import Enum
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, field_validator
+
+
+# ── Researcher Output Models ────────────────────────────────────────────────
+
+class ResearchFinding(BaseModel):
+    """A single sourced finding from web research."""
+
+    title: str = Field(description="Title of the source or finding")
+    summary: str = Field(description="Key finding or fact extracted from the source")
+    source_url: str = Field(description="URL of the source")
+    relevance: str = Field(default="high", description="Relevance level: high/medium/low")
+
+
+class ResearchBrief(BaseModel):
+    """Structured output from the Senior Research Analyst agent."""
+
+    topic: str = Field(description="The research topic")
+    findings: List[ResearchFinding] = Field(description="List of sourced findings")
+    key_statistics: List[str] = Field(default_factory=list, description="Key stats and data points")
+    conflicting_viewpoints: List[str] = Field(default_factory=list, description="Any conflicting views found")
+    gaps: List[str] = Field(default_factory=list, description="Gaps or areas needing further investigation")
+
+    @field_validator("findings")
+    @classmethod
+    def validate_min_findings(cls, v: List[ResearchFinding]) -> List[ResearchFinding]:
+        if len(v) < 2:
+            raise ValueError(f"Expected at least 2 findings, got {len(v)}")
+        return v
+
+
+# ── Analyst Output Models ──────────────────────────────────────────────────
+
+class ThemeAnalysis(BaseModel):
+    """A key theme identified from research findings."""
+
+    theme: str = Field(description="Name of the theme")
+    description: str = Field(description="Detailed description of the theme")
+    supporting_evidence: List[str] = Field(default_factory=list, description="Evidence supporting this theme")
+    significance: str = Field(default="medium", description="Significance level: high/medium/low")
+
+
+class Analysis(BaseModel):
+    """Structured output from the Data Analyst agent."""
+
+    topic: str = Field(description="The original research topic")
+    themes: List[ThemeAnalysis] = Field(description="3-5 key themes identified")
+    key_takeaways: List[str] = Field(description="Bullet-pointed key takeaways")
+    methodology_notes: Optional[str] = Field(default=None, description="Notes on analysis methodology")
+
+
+# ── Writer Output Models ────────────────────────────────────────────────────
+
+class ReportSection(str, Enum):
+    """Standard sections of a research report."""
+
+    TITLE_PAGE = "title_page"
+    EXECUTIVE_SUMMARY = "executive_summary"
+    INTRODUCTION = "introduction"
+    DETAILED_ANALYSIS = "detailed_analysis"
+    KEY_INSIGHTS = "key_insights"
+    CHALLENGES = "challenges"
+    FUTURE_OUTLOOK = "future_outlook"
+    SOURCES = "sources"
+
+
+class ResearchReport(BaseModel):
+    """Complete structured research report."""
+
+    topic: str = Field(description="The research topic")
+    executive_summary: str = Field(description="2-3 paragraph executive summary")
+    introduction: str = Field(description="Context and background")
+    detailed_analysis: str = Field(description="3-5 subsections with research findings")
+    key_insights: List[str] = Field(description="Bullet-pointed key insights")
+    challenges: List[str] = Field(description="Limitations, controversies, or challenges")
+    future_outlook: str = Field(description="Trends and predictions")
+    sources: List[str] = Field(description="Numbered list of sources")
+    word_count: Optional[int] = Field(default=None, description="Total word count of the report")
+
+    @field_validator("sources")
+    @classmethod
+    def validate_sources(cls, v: List[str]) -> List[str]:
+        if len(v) < 2:
+            raise ValueError(f"Expected at least 2 sources, got {len(v)}")
+        return v
+
+    def to_markdown(self) -> str:
+        """Convert the structured report to Markdown format."""
+        sections = [
+            f"# {self.topic}\n",
+            "## Executive Summary\n" + self.executive_summary,
+            "## Introduction\n" + self.introduction,
+            "## Detailed Analysis\n" + self.detailed_analysis,
+            "## Key Insights\n" + "\n".join(f"- {i}" for i in self.key_insights),
+            "## Challenges & Considerations\n" + "\n".join(f"- {c}" for c in self.challenges),
+            "## Future Outlook\n" + self.future_outlook,
+            "## Sources & References\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(self.sources)),
+        ]
+        return "\n\n".join(sections)
+
+
+# ── Critic / Evaluation Models ──────────────────────────────────────────────
+
+class CritiqueDimension(str, Enum):
+    """Dimensions evaluated by the quality critic."""
+
+    FACTUAL_ACCURACY = "factual_accuracy"
+    STRUCTURE = "structure"
+    CLARITY = "clarity"
+    COMPLETENESS = "completeness"
+    CITATION_QUALITY = "citation_quality"
+    OVERALL = "overall"
+
+
+class DimensionScore(BaseModel):
+    """Score for a single evaluation dimension."""
+
+    dimension: CritiqueDimension = Field(description="The dimension being scored")
+    score: int = Field(ge=0, le=10, description="Score from 0 (worst) to 10 (best)")
+    feedback: str = Field(description="Specific feedback for improvement")
+    suggestion: Optional[str] = Field(default=None, description="Actionable suggestion to improve")
+
+
+class CritiqueResult(BaseModel):
+    """Complete critique evaluation result."""
+
+    topic: str = Field(description="The research topic")
+    overall_score: int = Field(ge=0, le=10, description="Overall quality score (0-10)")
+    dimensions: List[DimensionScore] = Field(description="Per-dimension scores")
+    passed: bool = Field(description="Whether the report passed the quality threshold")
+    iteration: int = Field(default=1, ge=1, le=3, description="Which iteration this critique is for")
+    summary: str = Field(description="One-paragraph summary of the critique")
+
+
+# ── Pipeline Output ─────────────────────────────────────────────────────────
+
+class PipelineResult(BaseModel):
+    """Complete result from a research pipeline run (CrewAI or LangChain)."""
+
+    topic: str = Field(description="The research topic")
+    report: str = Field(description="The final report as Markdown text")
+    mode: str = Field(description="Pipeline mode used: crewai or langchain", pattern="^(crewai|langchain)$")
+    iterations: int = Field(default=1, ge=1, le=3, description="Number of critic loop iterations")
+    critiques: List[CritiqueResult] = Field(default_factory=list, description="All critique results if critic loop ran")
+    ragas_scores: Optional[dict] = Field(default=None, description="RAGAS evaluation scores if available")
+    error: Optional[str] = Field(default=None, description="Error message if the pipeline failed")
+    duration_seconds: Optional[float] = Field(default=None, description="Total pipeline duration in seconds")
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat(), description="ISO timestamp")

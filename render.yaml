@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: resona-ai-research-assistant
+    runtime: docker
+    sourceDir: research-agent
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: LANGCHAIN_TRACING_V2
+        value: "true"
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        value: resona-ai-research-assistant
+      - key: LLM_PROVIDER
+        value: groq
+      - key: QUALITY_THRESHOLD
+        value: "7"
+      - key: RESONA_CRITIC_THRESHOLD
+        value: "7"
+      - key: RESONA_MAX_CRITIC_ITERATIONS
+        value: "3"
