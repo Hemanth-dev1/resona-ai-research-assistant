@@ -8,6 +8,8 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: LANGCHAIN_TRACING_V2
         value: "true"
       - key: LANGSMITH_API_KEY

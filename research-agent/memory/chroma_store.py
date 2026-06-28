@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import chromadb
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from langchain_openai import OpenAIEmbeddings
 
 
 # Default paths
@@ -23,6 +23,21 @@ CHUNK_OVERLAP = 50
 # Module-level cached resources (lazily initialized)
 _client: Optional[chromadb.PersistentClient] = None
 _collection: Optional[chromadb.Collection] = None
+
+
+class _OpenAIEmbeddingFunction:
+    """Adapter for using LangChain OpenAI embeddings with ChromaDB."""
+
+    def __init__(self, model: str = "text-embedding-3-small") -> None:
+        self._embeddings = OpenAIEmbeddings(model=model)
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        return self._embeddings.embed_documents(input)
+
+
+def get_embedding_function() -> _OpenAIEmbeddingFunction:
+    """Create a Chroma-compatible OpenAI embedding function."""
+    return _OpenAIEmbeddingFunction(model="text-embedding-3-small")
 
 
 def _get_client(path: Optional[str] = None) -> chromadb.PersistentClient:
@@ -44,9 +59,8 @@ def _get_client(path: Optional[str] = None) -> chromadb.PersistentClient:
 def _get_collection(client: Optional[chromadb.PersistentClient] = None) -> chromadb.Collection:
     """Get or create the research memory collection (cached).
 
-    Uses SentenceTransformer 'all-MiniLM-L6-v2' for embeddings.
-    The client and embedding function are cached to avoid reloading
-    the sentence-transformer model on every call.
+    Uses OpenAI embeddings for vector search. The client and embedding function
+    are cached to avoid reinitializing the model on every call.
 
     Args:
         client: Optional ChromaDB client. Uses cached client if not provided.
@@ -58,7 +72,7 @@ def _get_collection(client: Optional[chromadb.PersistentClient] = None) -> chrom
     if _collection is None:
         if client is None:
             client = _get_client()
-        embedding_fn = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+        embedding_fn = get_embedding_function()
         _collection = client.get_or_create_collection(
             name=COLLECTION_NAME,
             embedding_function=embedding_fn,

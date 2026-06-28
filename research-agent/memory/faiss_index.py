@@ -8,32 +8,39 @@ the research phase.
 from typing import Optional
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+from langchain_openai import OpenAIEmbeddings
+
+
+class _OpenAIEmbedder:
+    """Simple adapter that exposes a sentence-transformer-like encode API."""
+
+    def __init__(self, model: str = "text-embedding-3-small") -> None:
+        self._embeddings = OpenAIEmbeddings(model=model)
+
+    def encode(self, texts: list[str], show_progress_bar: bool = False) -> np.ndarray:
+        vectors = self._embeddings.embed_documents(texts)
+        return np.array(vectors, dtype=np.float32)
 
 
 # Module-level state (in-memory, resets per session)
 _index = None
 _documents: list[str] = []
-_embedder: Optional[SentenceTransformer] = None
+_embedder: Optional[_OpenAIEmbedder] = None
 
 
-def _get_embedder() -> SentenceTransformer:
-    """Get or initialize the sentence transformer model.
-
-    Returns:
-        SentenceTransformer instance for 'all-MiniLM-L6-v2'.
-    """
+def _get_embedder() -> _OpenAIEmbedder:
+    """Get or initialize the OpenAI embeddings adapter."""
     global _embedder
     if _embedder is None:
-        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        _embedder = _OpenAIEmbedder()
     return _embedder
 
 
 def build_index(documents: list[str]) -> None:
     """Build a FAISS index from a list of documents.
 
-    Each document is embedded using the sentence transformer, then added
-    to a FAISS IndexFlatL2 index for fast similarity search.
+    Each document is embedded using OpenAI embeddings, then added to a
+    FAISS IndexFlatL2 index for fast similarity search.
 
     Args:
         documents: List of document strings to index.
