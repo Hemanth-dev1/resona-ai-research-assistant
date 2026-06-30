@@ -9,7 +9,6 @@ import os
 from datetime import datetime
 from typing import Any, Optional
 
-import os
 import chromadb
 from chromadb.errors import NotFoundError
 from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction as ChromaOpenAIEmbeddingFunction
