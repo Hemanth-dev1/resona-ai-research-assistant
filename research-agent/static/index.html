@@ -990,8 +990,21 @@ async function runAgent(topic){
 
         case 'complete': {
           console.log('[Resona] complete event received, fullContent length:', (fullContent || '').length);
+          if(!assistantBubble){
+            console.warn('[Resona] complete event but no assistantBubble — re-creating');
+            removeThinkingIndicator();
+            assistantBubble = addAssistantMessage();
+          }
           if(assistantBubble){
             assistantBubble.classList.remove('cursor-blink');
+            // Render full content if chunks didn't stream it yet
+            if(fullContent){
+              try{
+                assistantBubble.innerHTML = window.marked ? window.marked.parse(fullContent) : fullContent;
+              }catch(e){
+                assistantBubble.innerHTML = fullContent;
+              }
+            }
             // Add copy button to completed message
             const content = assistantBubble.closest('.msg-content');
             if(content && !content.querySelector('.copy-report-btn')){
@@ -1001,8 +1014,6 @@ async function runAgent(topic){
               content.appendChild(btnDiv);
               window._lastReportContent = fullContent;
             }
-          } else {
-            console.warn('[Resona] complete event but no assistantBubble existed');
           }
           lastPdfData = data;
           // Show PDF prompt
