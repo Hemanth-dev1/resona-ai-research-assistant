@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Any, Optional
 
 import chromadb
+from chromadb import EmbeddingFunction, Documents, Embeddings
+from chromadb.utils.embedding_functions import register_embedding_function
 from langchain_openai import OpenAIEmbeddings
 
 
@@ -25,15 +27,27 @@ _client: Optional[chromadb.PersistentClient] = None
 _collection: Optional[chromadb.Collection] = None
 
 
-class _OpenAIEmbeddingFunction:
-    """Adapter for using LangChain OpenAI embeddings with ChromaDB."""
+@register_embedding_function
+class _OpenAIEmbeddingFunction(EmbeddingFunction):
+    """ChromaDB 0.5+ compliant embedding function wrapping LangChain OpenAI embeddings."""
 
     def __init__(self, model: str = "text-embedding-3-small") -> None:
+        self._model = model
         self._embeddings = OpenAIEmbeddings(model=model)
-        self.name = model  # ChromaDB v0.5+ requires this attribute
 
-    def __call__(self, input: list[str]) -> list[list[float]]:
+    def __call__(self, input: Documents) -> Embeddings:
         return self._embeddings.embed_documents(input)
+
+    @staticmethod
+    def name() -> str:
+        return "resona_openai_ef"
+
+    def get_config(self) -> dict:
+        return {"model": self._model}
+
+    @staticmethod
+    def build_from_config(config: dict) -> "_OpenAIEmbeddingFunction":
+        return _OpenAIEmbeddingFunction(model=config.get("model", "text-embedding-3-small"))
 
 
 def get_embedding_function() -> _OpenAIEmbeddingFunction:
@@ -74,10 +88,15 @@ def _get_collection(client: Optional[chromadb.PersistentClient] = None) -> chrom
         if client is None:
             client = _get_client()
         embedding_fn = get_embedding_function()
-        _collection = client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            embedding_function=embedding_fn,
-        )
+        # Use get/create split to avoid ChromaDB 0.5+ validation issues
+        # with custom embedding functions on existing collections
+        try:
+            _collection = client.get_collection(name=COLLECTION_NAME)
+        except ValueError:
+            _collection = client.create_collection(
+                name=COLLECTION_NAME,
+                embedding_function=embedding_fn,
+            )
     return _collection
 
 
