@@ -30,6 +30,7 @@ class _OpenAIEmbeddingFunction:
 
     def __init__(self, model: str = "text-embedding-3-small") -> None:
         self._embeddings = OpenAIEmbeddings(model=model)
+        self.name = model  # ChromaDB v0.5+ requires this attribute
 
     def __call__(self, input: list[str]) -> list[list[float]]:
         return self._embeddings.embed_documents(input)
