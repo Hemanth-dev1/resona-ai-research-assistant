@@ -71,8 +71,11 @@ def run(topic: str, mode: str = "crewai") -> str:
         else:
             print(f"  ✅ Report validated: {len(parsed.sources)} sources, {len(parsed.key_insights)} insights")
 
-        # Save to ChromaDB for future retrieval
-        save_report(topic, report)
+        # Save to ChromaDB for future retrieval (non-blocking — fail gracefully)
+        try:
+            save_report(topic, report)
+        except Exception as e:
+            print(f"  ⚠️  ChromaDB save skipped: {e}")
 
         duration = time.time() - start_time
         print(f"  ⏱️  Pipeline completed in {duration:.1f}s")
@@ -127,8 +130,11 @@ def run(topic: str, mode: str = "crewai") -> str:
         report, critiques = run_critic_loop(topic, report)
         print(f"  📝 Critic loop: {len(critiques)} iteration(s)")
 
-        # Save to ChromaDB for future retrieval
-        save_report(topic, report)
+        # Save to ChromaDB for future retrieval (non-blocking — fail gracefully)
+        try:
+            save_report(topic, report)
+        except Exception as e:
+            print(f"  ⚠️  ChromaDB save skipped: {e}")
 
         duration = time.time() - start_time
         print(f"  ⏱️  Pipeline completed in {duration:.1f}s")
