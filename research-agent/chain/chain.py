@@ -5,6 +5,7 @@ LangChain Expression Language (LCEL) with ChatGroq as the LLM backend.
 """
 
 import os
+import time
 from functools import lru_cache
 from typing import Optional
 
@@ -89,8 +90,12 @@ def run_langchain(topic: str, memory_context: str = "") -> dict:
         "memory_context": memory_context or "No prior context available.",
     })
 
+    time.sleep(2)  # 🐌 Rate-limit spacer: stay within Groq 6000 TPM free tier
+
     print(f"  🧠 LangChain: Analyzing findings...")
     analysis = analysis_chain.invoke({"research": research})
+
+    time.sleep(2)  # 🐌 Rate-limit spacer
 
     print(f"  ✍️  LangChain: Writing report...")
     report = writer_chain.invoke({"topic": topic, "analysis": analysis})
