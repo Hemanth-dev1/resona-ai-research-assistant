@@ -10,8 +10,10 @@ from datetime import datetime
 from typing import Any, Optional
 
 import chromadb
+from chromadb import EmbeddingFunction, Documents, Embeddings
 from chromadb.errors import NotFoundError
-from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction as ChromaOpenAIEmbeddingFunction
+from chromadb.utils.embedding_functions import register_embedding_function
+from langchain_openai import OpenAIEmbeddings
 
 
 # Default paths
@@ -26,12 +28,32 @@ _client: Optional[chromadb.PersistentClient] = None
 _collection: Optional[chromadb.Collection] = None
 
 
-def get_embedding_function() -> ChromaOpenAIEmbeddingFunction:
-    """Create a ChromaDB 0.5+ native OpenAI embedding function."""
-    return ChromaOpenAIEmbeddingFunction(
-        api_key=os.getenv("OPENAI_API_KEY", ""),
-        model_name="text-embedding-3-small",
-    )
+@register_embedding_function
+class _OpenAIEmbeddingFunction(EmbeddingFunction):
+    """ChromaDB 0.5+ compliant embedding function wrapping LangChain OpenAI embeddings."""
+
+    def __init__(self, model: str = "text-embedding-3-small") -> None:
+        self._model = model
+        self._embeddings = OpenAIEmbeddings(model=model)
+
+    def __call__(self, input: Documents) -> Embeddings:
+        return self._embeddings.embed_documents(list(input))
+
+    @staticmethod
+    def name() -> str:
+        return "resona_openai"
+
+    def get_config(self) -> dict:
+        return {"model": self._model}
+
+    @staticmethod
+    def build_from_config(config: dict) -> "_OpenAIEmbeddingFunction":
+        return _OpenAIEmbeddingFunction(model=config.get("model", "text-embedding-3-small"))
+
+
+def get_embedding_function() -> _OpenAIEmbeddingFunction:
+    """Create a Chroma-compatible OpenAI embedding function."""
+    return _OpenAIEmbeddingFunction(model="text-embedding-3-small")
 
 
 def _get_client(path: Optional[str] = None) -> chromadb.PersistentClient:
