@@ -153,7 +153,10 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
 
             # Save report to ChromaDB first (so RAGAS has context to evaluate)
             from memory.chroma_store import save_report as chroma_save
-            chroma_save(topic, report)
+            try:
+                chroma_save(topic, report)
+            except Exception as e:
+                print(f"  ⚠️  ChromaDB save skipped: {e}")
 
             # Run RAGAS evaluation on LangChain mode (uses ChromaDB context)
             try:
@@ -279,7 +282,10 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
 
         # Save report to ChromaDB first (so RAGAS has context to evaluate)
         from memory.chroma_store import save_report as chroma_save
-        chroma_save(topic, report)
+        try:
+            chroma_save(topic, report)
+        except Exception as e:
+            print(f"  ⚠️  ChromaDB save skipped: {e}")
 
         # Save files
         from main import save_report
