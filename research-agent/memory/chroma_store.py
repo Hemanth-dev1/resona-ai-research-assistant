@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import chromadb
 from chromadb import EmbeddingFunction, Documents, Embeddings
+from chromadb.errors import NotFoundError
 from chromadb.utils.embedding_functions import register_embedding_function
 from langchain_openai import OpenAIEmbeddings
 
@@ -92,7 +93,7 @@ def _get_collection(client: Optional[chromadb.PersistentClient] = None) -> chrom
         # with custom embedding functions on existing collections
         try:
             _collection = client.get_collection(name=COLLECTION_NAME)
-        except ValueError:
+        except (ValueError, NotFoundError):
             _collection = client.create_collection(
                 name=COLLECTION_NAME,
                 embedding_function=embedding_fn,
