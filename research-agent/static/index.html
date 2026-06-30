@@ -701,6 +701,7 @@ function clearChat(){
 async function submitTopic(){
   const topic = input.value.trim();
   if(!topic || isRunning) return;
+  console.log('[Resona] submitTopic called, topic:', topic);
 
   // Clear previous messages and start fresh (like ChatGPT)
   clearChat();
@@ -719,6 +720,7 @@ async function submitTopic(){
 
   // Start the agent
   await runAgent(topic);
+  console.log('[Resona] runAgent returned');
 }
 
 // ── Add user message ───────────────────────────────────
@@ -851,6 +853,7 @@ function addAssistantMessage(){
 
 // ── Run Agent ──────────────────────────────────────────
 async function runAgent(topic){
+  console.log('[Resona] runAgent started, mode:', selectedMode);
   isRunning = true;
   sendBtn.disabled = true;
 
@@ -883,10 +886,15 @@ async function runAgent(topic){
     const decoder = new TextDecoder();
     let buffer = '';
     let currentEvent = '';
+    let eventCount = 0;
 
+    console.log('[Resona] Starting SSE stream read');
     while(true){
       const {done, value} = await reader.read();
-      if(done) break;
+      if(done) {
+        console.log('[Resona] SSE stream done, total events processed:', eventCount);
+        break;
+      }
       buffer += decoder.decode(value, {stream: true});
 
       const lines = buffer.split('\n');
@@ -898,10 +906,15 @@ async function runAgent(topic){
           continue;
         }
         if(line.startsWith('data: ')){
+          const rawJson = line.slice(6);
           try{
-            const data = JSON.parse(line.slice(6));
+            const data = JSON.parse(rawJson);
+            eventCount++;
+            console.log('[Resona] SSE event #' + eventCount + ':', currentEvent, data);
             handleSSEEvent(currentEvent, data);
-          }catch(e){}
+          }catch(e){
+            console.error('[Resona] SSE parse error:', e, 'raw line:', rawJson, 'event:', currentEvent);
+          }
         }
       }
     }
@@ -918,102 +931,120 @@ async function runAgent(topic){
   }
 
   function handleSSEEvent(type, data){
-    switch(type){
+    try {
+      switch(type){
 
-      case 'phase': {
-        const {phase, status, message} = data;
-        updateStep(phase, status, message);
-        break;
-      }
+        case 'phase': {
+          const {phase, status, message} = data;
+          updateStep(phase, status, message);
+          break;
+        }
 
-      case 'content_start': {
-        // Remove thinking indicator, add assistant message bubble
-        removeThinkingIndicator();
-        assistantBubble = addAssistantMessage();
-        // Show RAG context panel if in LangChain mode
-        if(selectedMode === 'langchain' && ragContextLoaded){
+        case 'content_start': {
+          console.log('[Resona] content_start — removing thinking indicator, adding assistant bubble');
+          removeThinkingIndicator();
+          assistantBubble = addAssistantMessage();
+          console.log('[Resona] assistantBubble set:', !!assistantBubble);
+          // Show RAG context panel if in LangChain mode
+          if(selectedMode === 'langchain' && ragContextLoaded){
+            const inner = document.getElementById('messagesInner');
+            const ragDiv = document.createElement('div');
+            ragDiv.className = 'rag-context';
+            ragDiv.id = 'ragContextPanel';
+            ragDiv.innerHTML = `
+              <button class="rc-header" onclick="toggleRagContext()">
+                <span class="rc-icon">📚</span>
+                <span class="rc-label">RAG context loaded from ChromaDB memory</span>
+                <span class="rc-toggle">▶</span>
+              </button>
+              <div class="rc-body" id="ragContextBody">
+                <p>Retrieved relevant context from prior research. The LangChain pipeline is using these past findings to generate a more informed report.</p>
+              </div>
+            `;
+            inner.insertBefore(ragDiv, inner.lastChild);
+          }
+          break;
+        }
+
+        case 'chunk': {
+          if(!assistantBubble) {
+            console.warn('[Resona] chunk received but no assistantBubble, re-creating');
+            removeThinkingIndicator();
+            assistantBubble = addAssistantMessage();
+          }
+          // Remove cursor blink during streaming
+          assistantBubble.classList.remove('cursor-blink');
+          fullContent += data.text;
+          // Render with marked if available
+          try{
+            assistantBubble.innerHTML = window.marked ? window.marked.parse(fullContent) : fullContent;
+          }catch(e){
+            console.warn('[Resona] marked parse error:', e);
+            assistantBubble.innerHTML = fullContent;
+          }
+          // Add cursor back
+          assistantBubble.classList.add('cursor-blink');
+          scrollToBottom();
+          break;
+        }
+
+        case 'complete': {
+          console.log('[Resona] complete event received, fullContent length:', (fullContent || '').length);
+          if(assistantBubble){
+            assistantBubble.classList.remove('cursor-blink');
+            // Add copy button to completed message
+            const content = assistantBubble.closest('.msg-content');
+            if(content && !content.querySelector('.copy-report-btn')){
+              const btnDiv = document.createElement('div');
+              btnDiv.style.cssText = 'display:flex;gap:6px;margin-top:8px;padding-left:4px';
+              btnDiv.innerHTML = '<button class="btn btn-sm btn-secondary copy-report-btn" onclick="copyReportContent()">📋 Copy Report</button>';
+              content.appendChild(btnDiv);
+              window._lastReportContent = fullContent;
+            }
+          } else {
+            console.warn('[Resona] complete event but no assistantBubble existed');
+          }
+          lastPdfData = data;
+          // Show PDF prompt
+          const prompt = document.getElementById('pdfPrompt');
+          if(prompt){
+            prompt.classList.add('show');
+            prompt.scrollIntoView({behavior:'smooth', block:'center'});
+          }
+          showToast('✅ Research complete!', 'success');
+          // Refresh sidebar data
+          loadReportHistory();
+          loadMemoryTopics();
+          break;
+        }
+
+        case 'error': {
+          console.error('[Resona] error event:', data.message);
+          removeThinkingIndicator();
+          // Show error in a message
           const inner = document.getElementById('messagesInner');
-          const ragDiv = document.createElement('div');
-          ragDiv.className = 'rag-context';
-          ragDiv.id = 'ragContextPanel';
-          ragDiv.innerHTML = `
-            <button class="rc-header" onclick="toggleRagContext()">
-              <span class="rc-icon">📚</span>
-              <span class="rc-label">RAG context loaded from ChromaDB memory</span>
-              <span class="rc-toggle">▶</span>
-            </button>
-            <div class="rc-body" id="ragContextBody">
-              <p>Retrieved relevant context from prior research. The LangChain pipeline is using these past findings to generate a more informed report.</p>
+          const div = document.createElement('div');
+          div.className = 'msg msg-assistant';
+          div.innerHTML = `
+            <div class="msg-avatar" style="background:var(--red)">✕</div>
+            <div class="msg-content">
+              <div class="msg-bubble" style="border-color:var(--red);background:var(--red-bg);color:var(--red)">
+                <strong>Error:</strong> ${escapeHtml(data.message)}
+              </div>
             </div>
           `;
-          inner.insertBefore(ragDiv, inner.lastChild);
+          inner.appendChild(div);
+          scrollToBottom();
+          showToast('❌ ' + data.message, 'error');
+          break;
         }
-        break;
-      }
 
-      case 'chunk': {
-        if(!assistantBubble) return;
-        // Remove cursor blink during streaming
-        assistantBubble.classList.remove('cursor-blink');
-        fullContent += data.text;
-        // Render with marked if available
-        try{
-          assistantBubble.innerHTML = window.marked ? window.marked.parse(fullContent) : fullContent;
-        }catch(e){
-          assistantBubble.innerHTML = fullContent;
+        default: {
+          console.warn('[Resona] unknown SSE event type:', type);
         }
-        // Add cursor back
-        assistantBubble.classList.add('cursor-blink');
-        scrollToBottom();
-        break;
       }
-
-      case 'complete': {
-        if(assistantBubble){
-          assistantBubble.classList.remove('cursor-blink');
-          // Add copy button to completed message
-          const content = assistantBubble.closest('.msg-content');
-          if(content && !content.querySelector('.copy-report-btn')){
-            const btnDiv = document.createElement('div');
-            btnDiv.style.cssText = 'display:flex;gap:6px;margin-top:8px;padding-left:4px';
-            btnDiv.innerHTML = '<button class="btn btn-sm btn-secondary copy-report-btn" onclick="copyReportContent()">📋 Copy Report</button>';
-            content.appendChild(btnDiv);
-            window._lastReportContent = fullContent;
-          }
-        }
-        lastPdfData = data;
-        // Show PDF prompt
-        const prompt = document.getElementById('pdfPrompt');
-        if(prompt){
-          prompt.classList.add('show');
-          prompt.scrollIntoView({behavior:'smooth', block:'center'});
-        }
-        showToast('✅ Research complete!', 'success');
-        // Refresh sidebar data
-        loadReportHistory();
-        loadMemoryTopics();
-        break;
-      }
-
-      case 'error': {
-        removeThinkingIndicator();
-        // Show error in a message
-        const inner = document.getElementById('messagesInner');
-        const div = document.createElement('div');
-        div.className = 'msg msg-assistant';
-        div.innerHTML = `
-          <div class="msg-avatar" style="background:var(--red)">✕</div>
-          <div class="msg-content">
-            <div class="msg-bubble" style="border-color:var(--red);background:var(--red-bg);color:var(--red)">
-              <strong>Error:</strong> ${escapeHtml(data.message)}
-            </div>
-          </div>
-        `;
-        inner.appendChild(div);
-        scrollToBottom();
-        showToast('❌ ' + data.message, 'error');
-        break;
-      }
+    } catch(e) {
+      console.error('[Resona] Error in handleSSEEvent for type', type, ':', e);
     }
   }
 }
