@@ -96,9 +96,10 @@ Resona is an autonomous multi-agent AI research assistant that researches **any 
 ### Pipeline Flow
 
 ```
-User → Planner (topic) → Researcher (tools: Serper/DDG + scrape)
+User → Planner (sub-questions) → Parallel Research (web search × N)
     → Analyst (themes & patterns) → Writer ⟷ Critic (self-correcting loop)
-    → RAGAS Evaluation → Report (MD + PDF) → ChromaDB Memory
+    → Verifier (fact-check claims against research) → RAGAS Evaluation
+    → Report (MD + PDF) → ChromaDB Memory
 ```
 
 ---
@@ -111,7 +112,8 @@ Two backends to choose from:
 
 | Mode | Description | Best For |
 |------|-------------|----------|
-| **CrewAI** (default) | Three role-based agents (Researcher → Analyst → Writer) with explicit delegation and sequential task execution | Structured research with clear agent specializations |
+| **LangGraph** (default) | StateGraph with conditional critic/verifier edges — planner → analysis_writer → critic ↔ revise → verifier → END | Recommended — formalized pipeline with typed state |
+| **CrewAI** | Three role-based agents (Researcher → Analyst → Writer) with explicit delegation and sequential task execution | Structured research with clear agent specializations |
 | **LangChain** | LCEL chain with ChromaDB RAG memory — retrieves relevant past reports before generating new ones | Topics with prior research context |
 
 ### 2. 🔄 Self-Correcting Critic Loop
@@ -382,6 +384,11 @@ research-agent/
 | `QUALITY_THRESHOLD` | No | `7` | Critic loop pass threshold (0-10) |
 | `RESONA_CRITIC_THRESHOLD` | No | `7` | Alias for QUALITY_THRESHOLD |
 | `RESONA_MAX_CRITIC_ITERATIONS` | No | `3` | Max critic loop iterations |
+| `ORCHESTRATION` | No | `langgraph` | Pipeline mode: `langgraph` (recommended), `crewai`, or `langchain` |
+| `LLM_MODEL_FAST` | No | per-provider fast | Fast model for planner & research (e.g., `llama-3.1-8b-instant`) |
+| `LLM_MODEL_CAPABLE` | No | per-provider capable | Capable model for analyst, writer, critic (e.g., `llama-3.3-70b-versatile`) |
+| `RESEARCH_MAX_CONCURRENT` | No | `1` | Parallel research workers (1 avoids Groq rate limits, increase for paid tiers) |
+| `MEMORY_CONTEXT` | No | — | Additional context from ChromaDB memory |
 | `RESONA_MAX_RETRIES` | No | `3` | Max retry attempts |
 | `RESONA_RETRY_MIN_WAIT` | No | `1.0` | Min retry backoff (seconds) |
 | `RESONA_RETRY_MAX_WAIT` | No | `10.0` | Max retry backoff (seconds) |
@@ -497,6 +504,9 @@ Tests verify:
 - PDF file creation with valid PDF header
 - Nested output directory creation
 - Both file formats returned from `save_report()`
+- Orchestration mode selection (`get_mode()` with env var)
+- Pipeline mode routing (LangGraph, CrewAI, LangChain)
+- Fallback web research for CLI mode
 
 ---
 
