@@ -48,9 +48,14 @@ def make_agents():
     """
     tools = get_search_tools()
 
-    from llm_config import get_fast_llm, get_capable_llm
-    fast_llm = get_fast_llm(temperature=0.3)
-    capable_llm = get_capable_llm(temperature=0.3)
+    from llm_config import get_provider, get_fast_model_name, get_capable_model_name
+    provider = get_provider().value
+    fast_model = get_fast_model_name()
+    capable_model = get_capable_model_name()
+
+    # CrewAI expects model names as strings in "provider/model_name" format
+    fast_llm_str = f"{provider}/{fast_model}"
+    capable_llm_str = f"{provider}/{capable_model}"
 
     planner = Agent(
         role="Research Planner",
@@ -60,7 +65,7 @@ def make_agents():
             "into well-structured, focused questions. You ensure every angle of the topic "
             "is covered before research begins."
         ),
-        llm=fast_llm,
+        llm=fast_llm_str,
         allow_delegation=False,
         verbose=True,
     )
@@ -74,7 +79,7 @@ def make_agents():
             "You always check for the most recent information and note conflicting viewpoints."
         ),
         tools=tools,
-        llm=fast_llm,
+        llm=fast_llm_str,
         allow_delegation=False,
         verbose=True,
     )
@@ -87,7 +92,7 @@ def make_agents():
             "meaningful insights from raw information. You organize findings logically and "
             "highlight the most important conclusions for the reader."
         ),
-        llm=capable_llm,
+        llm=capable_llm_str,
         allow_delegation=False,
         verbose=True,
     )
@@ -100,7 +105,7 @@ def make_agents():
             "You produce clean, publication-ready reports with executive summaries, "
             "detailed analysis, and proper citations."
         ),
-        llm=capable_llm,
+        llm=capable_llm_str,
         allow_delegation=False,
         verbose=True,
     )
