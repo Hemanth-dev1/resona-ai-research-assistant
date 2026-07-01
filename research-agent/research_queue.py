@@ -10,6 +10,8 @@ Usage:
 
 import asyncio
 import os
+import re
+import time as time_module
 from typing import Optional
 
 # ── Configuration ──────────────────────────────────────────────────────────
@@ -51,7 +53,11 @@ def _synthesize_findings(
     search_results: str,
     memory_context: str,
 ) -> str:
-    """Call the fast LLM to synthesize findings from search results."""
+    """Call the fast LLM to synthesize findings from search results.
+
+    Includes automatic retry on 429 rate limit errors with the
+    retry-after time extracted from Groq's error message.
+    """
     from llm_config import get_fast_llm
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -75,8 +81,35 @@ def _synthesize_findings(
             )
         ),
     ]
-    result = llm.invoke(messages)
-    return result.content if hasattr(result, "content") else str(result)
+
+    max_retries = 5
+    last_error = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = llm.invoke(messages)
+            return result.content if hasattr(result, "content") else str(result)
+        except Exception as e:
+            last_error = e
+            err_str = str(e).lower()
+
+            # Check if this is a rate limit (429) error
+            if "rate limit" in err_str or "rate_limit" in err_str or "429" in err_str:
+                # Try to extract the suggested wait time from Groq's error message
+                wait_match = re.search(r"try again in ([\d.]+)s", str(e))
+                wait_time = float(wait_match.group(1)) + 2 if wait_match else min(5 * attempt, 60)
+                print(f"  ⏳ Rate limit hit — waiting {wait_time:.1f}s before retry ({attempt}/{max_retries})...")
+                time_module.sleep(wait_time)
+            else:
+                # Non-rate-limit error: short backoff then give up
+                if attempt < max_retries:
+                    time_module.sleep(min(2 ** attempt, 15))
+                else:
+                    print(f"  ❌ LLM synthesis failed: {e}")
+                    return f"Synthesis error: {e}"
+
+    print(f"  ❌ All {max_retries} retries exhausted: {last_error}")
+    return f"Synthesis unavailable after {max_retries} retries: {last_error}"
 
 
 # ── Parallel research worker ───────────────────────────────────────────────
