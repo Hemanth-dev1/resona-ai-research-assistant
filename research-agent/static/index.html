@@ -1,1158 +1,592 @@
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<!doctype html>
+<html lang="en" class="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Resona — AI Research Agent</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Resona — AI Research Assistant</title>
+<meta name="description" content="Ask anything. Get a researched, cited report." />
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'] },
+        colors: {
+          background: 'rgb(var(--bg) / <alpha-value>)',
+          surface: 'rgb(var(--surface) / <alpha-value>)',
+          'surface-hover': 'rgb(var(--surface-hover) / <alpha-value>)',
+          border: 'rgb(var(--border) / <alpha-value>)',
+          foreground: 'rgb(var(--fg) / <alpha-value>)',
+          muted: 'rgb(var(--muted) / <alpha-value>)',
+          primary: 'rgb(var(--primary) / <alpha-value>)',
+          'primary-fg': 'rgb(var(--primary-fg) / <alpha-value>)',
+        }
+      }
+    }
+  }
+</script>
 <style>
-/* ── Mode toggle styles ────────────────────────── */
-.mode-toggle{display:flex;gap:3px;background:var(--bg2);border-radius:8px;padding:2px;max-width:780px;margin:0 auto 8px}
-.mode-btn{flex:1;padding:5px 12px;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;background:transparent;color:var(--text3);transition:all .12s;font-family:var(--font)}
-.mode-btn.active{background:var(--accent);color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15)}
-.mode-btn:hover:not(.active){background:var(--bg3);color:var(--text)}
-
-/* RAG badge */
-.rag-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:var(--accent-glow);color:var(--accent);margin-top:4px}
-
-/* Memory indicator */
-.memory-indicator{display:flex;align-items:center;gap:4px;margin-bottom:6px}
-.memory-indicator .mi-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
-.memory-indicator .mi-text{font-size:11px;color:var(--text3)}
-
-/* Sidebar sections */
-.sidebar-section{margin-bottom:12px}
-.sidebar-section .ss-header{display:flex;align-items:center;justify-content:space-between;padding:4px 10px;cursor:pointer;border-radius:6px;transition:background .12s}
-.sidebar-section .ss-header:hover{background:var(--bg3)}
-.sidebar-section .ss-label{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.7px}
-.sidebar-section .ss-count{font-size:10px;color:var(--text3);background:var(--bg3);padding:1px 6px;border-radius:4px;font-family:var(--mono)}
-.sidebar-section .ss-body{padding:2px 0;max-height:200px;overflow-y:auto;transition:max-height .2s}
-.sidebar-section .ss-body.collapsed{max-height:0;overflow:hidden;padding:0}
-.ss-item{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:6px;cursor:pointer;transition:all .12s;font-size:12px;color:var(--text2);margin-bottom:1px;border:none;background:none;width:100%;text-align:left;font-family:var(--font)}
-.ss-item:hover{background:var(--bg3);color:var(--text)}
-.ss-item .ssi-icon{flex-shrink:0;font-size:12px;width:18px;text-align:center}
-.ss-item .ssi-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.ss-item .ssi-date{font-size:9px;color:var(--text3);flex-shrink:0;font-family:var(--mono)}
-.ss-item .ssi-badge{font-size:8px;background:var(--bg3);padding:1px 5px;border-radius:3px;color:var(--text3);flex-shrink:0;font-family:var(--mono)}
-.ss-item .ssi-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
-.ss-item .ssi-dot.green{background:var(--green)}
-.ss-item .ssi-dot.purple{background:var(--purple)}
-.ss-empty{padding:12px 12px 8px;font-size:11px;color:var(--text3);text-align:center;font-style:italic}
-
-/* RAG context panel */
-.rag-context{margin:12px 0;border:1px solid var(--border);border-radius:10px;overflow:hidden;animation:fadeIn .3s ease}
-.rag-context .rc-header{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--bg2);cursor:pointer;font-size:12px;font-weight:500;color:var(--text2);transition:background .12s;border:none;width:100%;text-align:left;font-family:var(--font)}
-.rag-context .rc-header:hover{background:var(--bg3)}
-.rag-context .rc-header .rc-icon{font-size:14px}
-.rag-context .rc-header .rc-label{flex:1}
-.rag-context .rc-header .rc-toggle{font-size:10px;color:var(--text3);transition:transform .15s}
-.rag-context .rc-header .rc-toggle.open{transform:rotate(90deg)}
-.rag-context .rc-body{display:none;padding:10px 14px;max-height:200px;overflow-y:auto;font-size:12px;line-height:1.6;color:var(--text2);background:var(--bg)}
-.rag-context .rc-body.open{display:block}
-.rag-context .rc-body p{margin:4px 0}
-.rag-context .rc-body .rc-source{margin-bottom:8px;padding:6px 8px;background:var(--bg2);border-radius:6px;border-left:2px solid var(--accent)}
-.rag-context .rc-body .rc-source .rcs-topic{font-weight:600;color:var(--text)}
-.rag-context .rc-body .rc-source .rcs-preview{font-size:11px;margin-top:2px}
-
-/* Mode badge in header */
-.mode-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:var(--font)}
-.mode-badge.crewai{background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple)}
-.mode-badge.langchain{background:var(--accent-glow);color:var(--accent);border:1px solid var(--accent)}
-
-
-
-/* ── Reset & Base ──────────────────────────────────── */
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--mono:'JetBrains Mono','Fira Code',monospace}
-:root[data-theme="dark"]{
-  --bg:#0d1117; --bg2:#161b22; --bg3:#1c2333; --bg4:#21262d;
-  --surface:#161b22; --surface2:#1c2333; --border:#30363d; --border2:#21262d;
-  --text:#e6edf3; --text2:#8b949e; --text3:#6e7681;
-  --accent:#58a6ff; --accent2:#1f6feb; --accent-glow:rgba(88,166,255,0.12);
-  --green:#3fb950; --green-bg:rgba(63,185,80,0.12);
-  --yellow:#d29922; --yellow-bg:rgba(210,153,34,0.12);
-  --red:#f85149; --red-bg:rgba(248,81,73,0.12);
-  --purple:#bc8cff; --purple-bg:rgba(188,140,255,0.12);
-  --orange:#db6d28; --orange-bg:rgba(219,109,40,0.12);
-  --shadow:0 1px 3px rgba(0,0,0,.3),0 4px 24px rgba(0,0,0,.2);
-  --scrollbar:#30363d; --msg-bg:#1c2333; --msg-border:#30363d;
-  --input-bg:#161b22; --brand:#bc8cff;
-}
-:root[data-theme="light"]{
-  --bg:#ffffff; --bg2:#f6f8fa; --bg3:#eef1f5; --bg4:#e1e4e8;
-  --surface:#ffffff; --surface2:#f6f8fa; --border:#d0d7de; --border2:#e1e4e8;
-  --text:#1f2328; --text2:#656d76; --text3:#8b949e;
-  --accent:#0969da; --accent2:#0550ae; --accent-glow:rgba(9,105,218,0.08);
-  --green:#1a7f37; --green-bg:rgba(26,127,55,0.08);
-  --yellow:#9a6700; --yellow-bg:rgba(154,103,0,0.08);
-  --red:#cf222e; --red-bg:rgba(207,34,46,0.08);
-  --purple:#8250df; --purple-bg:rgba(130,80,223,0.08);
-  --orange:#bd5612; --orange-bg:rgba(189,86,18,0.08);
-  --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 24px rgba(0,0,0,.04);
-  --scrollbar:#d0d7de; --msg-bg:#f6f8fa; --msg-border:#e1e4e8;
-  --input-bg:#ffffff; --brand:#8250df;
-}
-html{font-size:15px;height:100%}
-body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6;height:100%;overflow:hidden;-webkit-font-smoothing:antialiased}
-::-webkit-scrollbar{width:5px;height:5px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:3px}
-a{color:var(--accent);text-decoration:none}
-a:hover{text-decoration:underline}
-
-/* ── App Layout ───────────────────────────────────── */
-.app{display:flex;height:100vh}
-
-/* ── Sidebar ──────────────────────────────────────── */
-.sidebar{
-  width:260px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);
-  display:flex;flex-direction:column;position:relative;z-index:10;
-}
-.sidebar-brand{
-  padding:20px 20px 16px;border-bottom:1px solid var(--border);
-}
-.sidebar-brand .logo-row{display:flex;align-items:center;gap:10px}
-.sidebar-brand .logo-icon{width:36px;height:36px;background:linear-gradient(135deg,var(--brand),var(--accent));border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;font-weight:700;flex-shrink:0}
-.sidebar-brand .logo-text{font-size:20px;font-weight:800;letter-spacing:-.5px}
-.sidebar-brand .logo-text span{color:var(--brand)}
-.sidebar-brand .tagline{font-size:11px;color:var(--text3);margin-top:2px;margin-left:46px}
-.sidebar-nav{padding:12px 10px;flex:1;overflow-y:auto}
-.sidebar-nav .label{font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;padding:8px 10px 6px}
-.quick-pill{
-  display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;
-  color:var(--text2);cursor:pointer;transition:all .12s;font-size:13px;font-weight:500;
-  margin-bottom:2px;border:none;background:none;width:100%;text-align:left;font-family:var(--font);
-}
-.quick-pill:hover{background:var(--bg3);color:var(--text)}
-.quick-pill .qp-icon{font-size:16px;width:22px;text-align:center;flex-shrink:0}
-.quick-pill .qp-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sidebar-footer{
-  padding:14px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text3);
-}
-.sidebar-footer .footer-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-.sidebar-footer .badge{display:inline-block;background:var(--bg3);padding:2px 8px;border-radius:4px;font-size:10px;font-family:var(--mono)}
-
-.theme-toggle{display:flex;gap:3px;background:var(--bg2);border-radius:6px;padding:2px;margin-top:10px}
-.theme-btn{flex:1;padding:4px 8px;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:500;background:transparent;color:var(--text3);transition:all .12s;font-family:var(--font)}
-.theme-btn.active{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08)}
-
-@media(max-width:768px){.sidebar{width:56px}.sidebar-brand .logo-text,.sidebar-brand .tagline,.quick-pill .qp-text,.sidebar-footer,.sidebar-nav .label,.theme-toggle{display:none}.sidebar-brand{padding:12px 8px}.sidebar-nav{padding:8px 4px}.quick-pill{justify-content:center;padding:8px}.sidebar-brand .logo-row{margin:0}.sidebar-brand .logo-icon{width:32px;height:32px;font-size:16px}}
-
-/* ── Main Chat ────────────────────────────────────── */
-.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
-
-/* Chat Header */
-.chat-header{
-  padding:14px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;
-  justify-content:space-between;flex-shrink:0;background:var(--bg);
-}
-.chat-header .ch-left{display:flex;align-items:center;gap:10px}
-.chat-header .ch-title{font-size:15px;font-weight:600}
-.chat-header .ch-subtitle{font-size:12px;color:var(--text3)}
-.chat-header .ch-actions{display:flex;gap:6px}
-.ch-header-btn{
-  padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:transparent;
-  color:var(--text2);cursor:pointer;font-size:12px;font-weight:500;transition:all .12s;font-family:var(--font);
-}
-.ch-header-btn:hover{background:var(--bg3);color:var(--text)}
-
-/* Messages Area */
-.messages{
-  flex:1;overflow-y:auto;padding:20px 0 0;scroll-behavior:smooth;
-}
-.messages-inner{max-width:780px;margin:0 auto;padding:0 24px}
-
-/* Welcome Screen */
-.welcome{text-align:center;padding:60px 20px 40px}
-.welcome .w-icon{width:64px;height:64px;background:linear-gradient(135deg,var(--brand),var(--accent));border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 16px;color:#fff}
-.welcome h2{font-size:22px;font-weight:700;margin-bottom:6px;letter-spacing:-.3px}
-.welcome .w-sub{color:var(--text2);font-size:14px;margin-bottom:24px}
-.welcome .w-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;max-width:460px;margin:0 auto}
-.w-grid-btn{
-  padding:12px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);
-  cursor:pointer;transition:all .15s;text-align:left;font-family:var(--font);
-}
-.w-grid-btn:hover{border-color:var(--accent);background:var(--accent-glow)}
-.w-grid-btn .wgb-icon{font-size:20px;margin-bottom:6px}
-.w-grid-btn .wgb-title{font-size:13px;font-weight:600;margin-bottom:2px}
-.w-grid-btn .wgb-desc{font-size:11px;color:var(--text3);line-height:1.4}
-
-/* Message Bubbles */
-.msg{margin-bottom:16px;animation:fadeIn .3s ease}
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.msg-user{
-  display:flex;justify-content:flex-end;gap:10px;align-items:flex-start;
-}
-.msg-user .msg-bubble{
-  background:var(--accent);color:#fff;padding:10px 16px;border-radius:16px 16px 4px 16px;
-  font-size:14px;line-height:1.5;max-width:75%;word-wrap:break-word;
-}
-.msg-user .msg-avatar{
-  width:30px;height:30px;border-radius:8px;background:var(--accent2);display:flex;
-  align-items:center;justify-content:center;font-size:14px;color:#fff;flex-shrink:0;margin-top:2px;
-}
-.msg-assistant{
-  display:flex;gap:10px;align-items:flex-start;
-}
-.msg-assistant .msg-avatar{
-  width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--accent));
-  display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;flex-shrink:0;margin-top:2px;
-}
-.msg-assistant .msg-content{
-  flex:1;min-width:0;
-}
-.msg-assistant .msg-bubble{
-  background:var(--msg-bg);border:1px solid var(--msg-border);padding:16px 20px;
-  border-radius:12px 12px 12px 4px;font-size:14px;line-height:1.7;word-wrap:break-word;
-}
-.msg-assistant .msg-bubble h1{font-size:20px;font-weight:700;margin:20px 0 10px;letter-spacing:-.3px}
-.msg-assistant .msg-bubble h2{font-size:17px;font-weight:700;margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--border);color:var(--brand)}
-.msg-assistant .msg-bubble h3{font-size:15px;font-weight:600;margin:14px 0 6px}
-.msg-assistant .msg-bubble p{margin:8px 0}
-.msg-assistant .msg-bubble strong{color:var(--text)}
-.msg-assistant .msg-bubble ul,.msg-assistant .msg-bubble ol{padding-left:20px;margin:8px 0}
-.msg-assistant .msg-bubble li{margin:4px 0}
-.msg-assistant .msg-bubble blockquote{border-left:3px solid var(--accent);padding:8px 16px;margin:12px 0;background:var(--bg3);border-radius:6px;color:var(--text2);font-style:italic}
-.msg-assistant .msg-bubble code{background:var(--bg3);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px}
-.msg-assistant .msg-bubble pre{background:var(--bg3);padding:14px 16px;border-radius:8px;overflow-x:auto;margin:12px 0;border:1px solid var(--border)}
-.msg-assistant .msg-bubble pre code{background:none;padding:0;font-size:13px;line-height:1.5}
-.msg-assistant .msg-bubble a{color:var(--accent)}
-.msg-assistant .msg-bubble hr{margin:16px 0;border:none;border-top:1px solid var(--border)}
-
-/* Thinking indicator */
-.thinking-indicator{
-  display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;animation:fadeIn .3s ease;
-}
-.thinking-indicator .ti-avatar{
-  width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--brand),var(--accent));
-  display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;flex-shrink:0;
-}
-.thinking-indicator .ti-content{flex:1;min-width:0}
-.thinking-indicator .ti-steps{display:flex;flex-direction:column;gap:6px}
-.ti-step{
-  display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;
-  background:var(--bg2);border:1px solid var(--border);font-size:13px;color:var(--text2);transition:all .2s;
-}
-.ti-step .ti-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0;transition:all .3s}
-.ti-step.active{border-color:var(--accent);background:var(--accent-glow);color:var(--text)}
-.ti-step.active .ti-dot{background:var(--accent);animation:pulse-dot 1s ease-in-out infinite}
-.ti-step.done{border-color:var(--green);background:var(--green-bg);color:var(--green)}
-.ti-step.done .ti-dot{background:var(--green)}
-.ti-step.error{border-color:var(--red);background:var(--red-bg);color:var(--red)}
-.ti-step.error .ti-dot{background:var(--red)}
-@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.4}}
-.ti-step .ti-label{font-weight:500}
-.ti-step .ti-status{font-size:11px;color:var(--text3);margin-left:auto}
-.ti-step.done .ti-status{color:var(--green)}
-.ti-step.active .ti-status{color:var(--accent)}
-
-/* Cursor blink for streaming */
-.cursor-blink::after{
-  content:'▊';animation:blink 1s step-end infinite;color:var(--accent);font-size:14px;margin-left:2px;
-}
-@keyframes blink{50%{opacity:0}}
-
-/* PDF Prompt Bar */
-.pdf-prompt{
-  display:none;align-items:center;gap:12px;padding:14px 20px;margin:16px 0 20px;
-  background:linear-gradient(135deg,var(--accent-glow),var(--purple-bg));
-  border:1px solid var(--border);border-radius:12px;animation:fadeIn .4s ease;
-}
-.pdf-prompt.show{display:flex}
-.pdf-prompt .pp-icon{font-size:22px;flex-shrink:0}
-.pdf-prompt .pp-text{flex:1;min-width:0}
-.pdf-prompt .pp-title{font-size:13px;font-weight:600;margin-bottom:2px}
-.pdf-prompt .pp-desc{font-size:12px;color:var(--text2)}
-.btn{
-  display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;
-  border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;
-  font-family:var(--font);white-space:nowrap;
-}
-.btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{background:var(--accent2);box-shadow:0 0 16px var(--accent-glow)}
-.btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
-.btn-secondary:hover{background:var(--bg4)}
-.btn-green{background:var(--green);color:#fff}
-.btn-green:hover{filter:brightness(1.1)}
-.btn-sm{padding:6px 12px;font-size:12px}
-
-/* PDF Result overlay (after generating) */
-.pdf-result{
-  display:none;margin:12px 0 20px;padding:16px 20px;border:1px solid var(--green);
-  border-radius:12px;background:var(--green-bg);animation:fadeIn .3s ease;
-}
-.pdf-result.show{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.pdf-result .pr-icon{font-size:20px}
-.pdf-result .pr-text{flex:1;min-width:0}
-.pdf-result .pr-title{font-weight:600;font-size:14px}
-.pdf-result .pr-desc{font-size:12px;color:var(--text2);margin-top:2px}
-
-/* Input Area */
-.input-area{
-  flex-shrink:0;padding:16px 24px 24px;border-top:1px solid var(--border);background:var(--bg);
-}
-.input-wrap{
-  max-width:780px;margin:0 auto;display:flex;gap:8px;align-items:flex-end;
-  background:var(--input-bg);border:1px solid var(--border);border-radius:14px;
-  padding:6px;transition:border-color .15s,box-shadow .15s;
-}
-.input-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
-.input-wrap textarea{
-  flex:1;border:none;background:transparent;padding:8px 10px;font-size:14px;font-family:var(--font);
-  color:var(--text);outline:none;resize:none;min-height:24px;max-height:120px;line-height:1.5;
-}
-.input-wrap textarea::placeholder{color:var(--text3)}
-.input-wrap .send-btn{
-  width:38px;height:38px;border-radius:10px;border:none;background:var(--accent);color:#fff;
-  cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s;
-  font-size:16px;flex-shrink:0;
-}
-.input-wrap .send-btn:hover{background:var(--accent2)}
-.input-wrap .send-btn:disabled{opacity:.4;cursor:not-allowed}
-.input-wrap .send-btn svg{width:18px;height:18px}
-.input-footer{max-width:780px;margin:8px auto 0;font-size:11px;color:var(--text3);text-align:center}
-
-/* Toast */
-.toast{
-  position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:10px 20px;
-  border-radius:10px;background:var(--surface);border:1px solid var(--border);
-  box-shadow:var(--shadow);font-size:13px;z-index:1000;display:none;
-  animation:slideUp .3s ease;white-space:nowrap;
-}
-.toast.show{display:flex;align-items:center;gap:8px}
-.toast.success{border-color:var(--green)}
-.toast.error{border-color:var(--red)}
-@keyframes slideUp{from{opacity:0;transform:translateX(-50%) translateY(16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
-
-/* Built with Resona footer */
-.built-with{max-width:780px;margin:0 auto;padding:24px 24px 8px;text-align:center;font-size:11px;color:var(--text3)}
-.built-with strong{color:var(--brand)}
+  :root.dark {
+    --bg: 10 10 10; --surface: 22 22 24; --surface-hover: 30 30 33;
+    --border: 38 38 42; --fg: 240 240 242; --muted: 150 150 160;
+    --primary: 99 102 241; --primary-fg: 255 255 255;
+  }
+  :root.light {
+    --bg: 252 252 253; --surface: 245 245 247; --surface-hover: 238 238 241;
+    --border: 224 224 230; --fg: 20 20 24; --muted: 100 100 110;
+    --primary: 79 70 229; --primary-fg: 255 255 255;
+  }
+  html, body, #root { height: 100%; }
+  body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: rgb(var(--bg)); color: rgb(var(--fg)); }
+  .thinking-dot { width: 5px; height: 5px; border-radius: 9999px; background: rgb(var(--muted)); display: inline-block; animation: pulse 1.2s infinite ease-in-out; }
+  @keyframes pulse { 0%,80%,100% { opacity:.25; transform: scale(.8);} 40% { opacity:1; transform: scale(1);} }
+  .message-in { animation: msgIn .25s ease-out; }
+  @keyframes msgIn { from { opacity:0; transform: translateY(4px);} to { opacity:1; transform: none;} }
+  .prose-resona { font-size: 15px; line-height: 1.75; color: rgb(var(--fg)); }
+  .prose-resona h1 { font-size: 1.6em; font-weight: 700; margin: 1.2em 0 .5em; letter-spacing: -.01em; }
+  .prose-resona h2 { font-size: 1.3em; font-weight: 600; margin: 1.4em 0 .4em; }
+  .prose-resona h3 { font-size: 1.1em; font-weight: 600; margin: 1.2em 0 .3em; }
+  .prose-resona p { margin: .7em 0; }
+  .prose-resona ul, .prose-resona ol { margin: .7em 0; padding-left: 1.4em; }
+  .prose-resona ul { list-style: disc; } .prose-resona ol { list-style: decimal; }
+  .prose-resona li { margin: .25em 0; }
+  .prose-resona a { color: rgb(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
+  .prose-resona code { background: rgb(var(--surface)); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+  .prose-resona pre { background: rgb(var(--surface)); padding: 14px 16px; border-radius: 10px; overflow:auto; margin: .8em 0; border: 1px solid rgb(var(--border)); }
+  .prose-resona pre code { background: transparent; padding: 0; }
+  .prose-resona blockquote { border-left: 3px solid rgb(var(--border)); padding-left: 1em; color: rgb(var(--muted)); margin: .8em 0; }
+  .prose-resona table { width:100%; border-collapse: collapse; margin: .8em 0; font-size: .95em; }
+  .prose-resona th, .prose-resona td { border: 1px solid rgb(var(--border)); padding: 6px 10px; text-align: left; }
+  .prose-resona strong { color: rgb(var(--fg)); }
+  .prose-resona hr { margin: 1em 0; border: none; border-top: 1px solid rgb(var(--border)); }
+  .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 8px; }
 </style>
 </head>
 <body>
+<div id="root"></div>
 
-<div class="app">
-
-  <!-- ── Sidebar ──────────────────────────────────── -->
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <div class="logo-row">
-        <div class="logo-icon">R</div>
-        <div class="logo-text">Res<span>o</span>na</div>
-      </div>
-      <div class="tagline">AI Research Agent</div>
-            <div style="display:flex;gap:6px;align-items:center;margin-top:10px">
-        <div class="theme-toggle" style="flex-shrink:0;margin:0">
-          <button class="theme-btn active" data-theme-val="dark" onclick="setTheme('dark')">🌙</button>
-          <button class="theme-btn" data-theme-val="light" onclick="setTheme('light')">☀️</button>
-        </div>
-      </div>
-    </div>
-    <nav class="sidebar-nav">
-      <div class="label">Quick Topics</div>
-      <button class="quick-pill" data-topic="Impact of AI on hiring in 2025">
-        <span class="qp-icon">🤖</span><span class="qp-text">AI & Hiring 2025</span>
-      </button>
-      <button class="quick-pill" data-topic="Quantum computing breakthroughs 2026">
-        <span class="qp-icon">⚛️</span><span class="qp-text">Quantum Computing</span>
-      </button>
-      <button class="quick-pill" data-topic="Electric vehicle market trends 2026">
-        <span class="qp-icon">🚗</span><span class="qp-text">EV Market Trends</span>
-      </button>
-      <button class="quick-pill" data-topic="AI in Healthcare 2026">
-        <span class="qp-icon">🏥</span><span class="qp-text">AI + Healthcare</span>
-      </button>
-      <button class="quick-pill" data-topic="Remote work and AI 2025">
-        <span class="qp-icon">🏠</span><span class="qp-text">Remote Work + AI</span>
-      </button>
-      <button class="quick-pill" data-topic="Edge AI and on-device machine learning trends 2025">
-        <span class="qp-icon">📱</span><span class="qp-text">Edge AI & ML</span>
-      </button>
-
-      <div style="height:10px"></div>
-
-      <!-- Report History -->
-      <div class="sidebar-section" id="reportHistorySection">
-        <div class="ss-header" onclick="toggleSidebarSection('reportHistoryBody')">
-          <span class="ss-label">📄 Report History</span>
-          <span class="ss-count" id="reportCount">0</span>
-        </div>
-        <div class="ss-body" id="reportHistoryBody"></div>
-      </div>
-
-      <!-- Memory Topics -->
-      <div class="sidebar-section" id="memoryTopicsSection">
-        <div class="ss-header" onclick="toggleSidebarSection('memoryTopicsBody')">
-          <span class="ss-label">🧠 Memory Topics</span>
-          <span class="ss-count" id="memoryCount">0</span>
-        </div>
-        <div class="ss-body" id="memoryTopicsBody"></div>
-      </div>
-    </nav>
-    <div class="sidebar-footer">
-      <div class="memory-indicator" id="memoryIndicator" style="display:none">
-        <div class="mi-dot"></div>
-        <span class="mi-text" id="memoryText">Memory: 0 topics stored</span>
-      </div>
-      <div class="footer-row">
-        <span>Model</span>
-        <span class="badge" id="modelBadge">llama-3.1-8b</span>
-      </div>
-      <div style="margin-top:8px;font-size:10px;opacity:.6">Research + Resonance</div>
-    </div>
-  </aside>
-
-  <!-- ── Main Chat ────────────────────────────────── -->
-  <div class="main">
-    <div class="chat-header">
-      <div class="ch-left">
-        <div class="ch-title" style="display:flex;align-items:center;gap:10px">
-          Resona
-          <span class="mode-badge crewai" id="headerModeBadge">🤖 CrewAI</span>
-        </div>
-      </div>
-      <div class="ch-actions">
-        <button class="ch-header-btn" id="cancelBtn" style="display:none" onclick="cancelResearch()">⏹ Cancel</button>
-        <button class="ch-header-btn" onclick="clearChat()">✕ Clear</button>
-      </div>
-    </div>
-
-    <!-- Messages -->
-    <div class="messages" id="messagesContainer">
-      <div class="messages-inner" id="messagesInner">
-        <!-- Welcome Screen -->
-        <div class="welcome" id="welcomeScreen">
-          <div class="w-icon">R</div>
-          <h2>What would you like to research?</h2>
-          <p class="w-sub">Ask any topic and Resona will research, analyze, and write a comprehensive report using three AI agents.</p>
-          <div class="w-grid">
-            <button class="w-grid-btn" onclick="quickTopic('Impact of AI on hiring in 2025')">
-              <div class="wgb-icon">🤖</div>
-              <div class="wgb-title">AI & Hiring</div>
-              <div class="wgb-desc">Impact of AI on recruitment</div>
-            </button>
-            <button class="w-grid-btn" onclick="quickTopic('Quantum computing breakthroughs 2026')">
-              <div class="wgb-icon">⚛️</div>
-              <div class="wgb-title">Quantum Computing</div>
-              <div class="wgb-desc">Latest breakthroughs</div>
-            </button>
-            <button class="w-grid-btn" onclick="quickTopic('Edge AI and on-device machine learning trends 2025')">
-              <div class="wgb-icon">📱</div>
-              <div class="wgb-title">Edge AI & ML</div>
-              <div class="wgb-desc">On-device ML trends</div>
-            </button>
-            <button class="w-grid-btn" onclick="quickTopic('Electric vehicle market trends 2026')">
-              <div class="wgb-icon">🚗</div>
-              <div class="wgb-title">EV Market</div>
-              <div class="wgb-desc">Market trends & forecasts</div>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Input Area -->
-    <div class="input-area">
-      <div class="mode-toggle" id="modeToggle">
-        <button class="mode-btn active" data-mode="crewai" onclick="setMode('crewai')">🤖 CrewAI</button>
-        <button class="mode-btn" data-mode="langchain" onclick="setMode('langchain')">🧩 LangChain</button>
-      </div>
-      <div class="input-wrap">
-        <textarea id="topicInput" rows="1" placeholder="Ask Resona to research any topic..." autocomplete="off" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-        <button class="send-btn" id="sendBtn" onclick="submitTopic()" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Toast -->
-<div class="toast" id="toast"></div>
-
-<script>
-// ── Sidebar section toggle ─────────────────────────────
-function toggleSidebarSection(id){
-  const body = document.getElementById(id);
-  if(body) body.classList.toggle('collapsed');
-}
-
-// ── Load report history ────────────────────────────────
-async function loadReportHistory(){
-  try{
-    const res = await fetch('/api/reports');
-    const data = await res.json();
-    const body = document.getElementById('reportHistoryBody');
-    const count = document.getElementById('reportCount');
-    if(!body) return;
-    const reports = data.reports || [];
-    count.textContent = reports.length;
-    if(reports.length === 0){
-      body.innerHTML = '<div class="ss-empty">No reports yet</div>';
-      return;
-    }
-    body.innerHTML = reports.slice(0, 15).map(r => `
-      <button class="ss-item" onclick="loadReport('${escapeHtml(r.filename)}')" title="${escapeHtml(r.name)}">
-        <span class="ssi-icon">📄</span>
-        <span class="ssi-text">${escapeHtml(r.name.replace(/_/g,' ').replace(/\d{8}_\d{6}$/,'').trim().substring(0,40))}</span>
-        <span class="ssi-date">${escapeHtml(r.date.split('·')[0].trim())}</span>
-      </button>
-    `).join('');
-  } catch(e){
-    console.error('Failed to load report history:', e);
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "marked": "https://esm.sh/marked@12.0.2"
   }
-}
-
-// ── Load report content ────────────────────────────────
-async function loadReport(filename){
-  if(isRunning) return;
-  try{
-    const res = await fetch('/api/reports/' + encodeURIComponent(filename));
-    const data = await res.json();
-    if(data.error){ showToast(data.error, 'error'); return; }
-    clearChat();
-    addUserMessage('📂 Loaded: ' + (data.topic || filename));
-    const inner = document.getElementById('messagesInner');
-    const div = document.createElement('div');
-    div.className = 'msg msg-assistant';
-    div.innerHTML = `
-      <div class="msg-avatar">R</div>
-      <div class="msg-content">
-        <div class="msg-bubble" id="loadedReportBubble">${window.marked ? window.marked.parse(data.content) : data.content}</div>
-        <div style="display:flex;gap:6px;margin-top:8px;padding-left:4px">
-          <button class="btn btn-sm btn-secondary" onclick="copyReportContent()">📋 Copy</button>
-          ${data.has_pdf ? `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${escapeHtml(data.filename.replace('.md',''))}.md/pdf','_blank')">⬇ PDF</button>` : ''}
-          <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${escapeHtml(data.filename)}','_blank')">⬇ MD</button>
-        </div>
-      </div>
-    `;
-    inner.appendChild(div);
-    scrollToBottom();
-    window._lastReportContent = data.content;
-  } catch(e){
-    showToast('Failed to load report: ' + e.message, 'error');
-  }
-}
-
-// ── Copy report content ────────────────────────────────
-function copyReportContent(){
-  const text = window._lastReportContent || '';
-  if(!text){ showToast('No content to copy', 'error'); return; }
-  navigator.clipboard.writeText(text).then(() => {
-    showToast('📋 Report copied to clipboard!', 'success');
-  }).catch(() => {
-    showToast('Failed to copy', 'error');
-  });
-}
-
-// ── Load memory topics ─────────────────────────────────
-async function loadMemoryTopics(){
-  try{
-    const res = await fetch('/memory/topics');
-    const data = await res.json();
-    const topics = data.topics || [];
-    const count = data.count || 0;
-    const body = document.getElementById('memoryTopicsBody');
-    const countEl = document.getElementById('memoryCount');
-    const memoryText = document.getElementById('memoryText');
-    const footerMemory = document.getElementById('footerMemoryText');
-    const headerMemory = document.getElementById('headerMemoryStat');
-    if(countEl) countEl.textContent = count;
-    if(footerMemory) footerMemory.textContent = count + ' topic' + (count !== 1 ? 's' : '') + ' in memory';
-    if(headerMemory) headerMemory.textContent = count + ' topic' + (count !== 1 ? 's' : '');
-    if(memoryText) memoryText.textContent = 'Memory: ' + count + ' topic' + (count !== 1 ? 's' : '') + ' stored';
-    const indicator = document.getElementById('memoryIndicator');
-    if(indicator) indicator.style.display = count > 0 ? 'flex' : 'none';
-    if(!body) return;
-    if(topics.length === 0){
-      body.innerHTML = '<div class="ss-empty">No stored topics yet</div>';
-      return;
-    }
-    body.innerHTML = topics.map(t => `
-      <button class="ss-item" onclick="quickResearch('${escapeHtml(t)}')" title="Research this topic with current settings">
-        <span class="ssi-dot green"></span>
-        <span class="ssi-text">${escapeHtml(t)}</span>
-        <span class="ssi-badge">RAG</span>
-      </button>
-    `).join('');
-  } catch(e){
-    console.error('Failed to load memory topics:', e);
-  }
-}
-
-// ── Quick research from memory topic ───────────────────
-function quickResearch(topic){
-  if(isRunning) return;
-  document.getElementById('topicInput').value = topic;
-  document.getElementById('sendBtn').disabled = false;
-  submitTopic();
-}
-
-// ── Theme ──────────────────────────────────────────────
-function setTheme(t){
-  document.documentElement.setAttribute('data-theme',t);
-  localStorage.setItem('theme',t);
-  document.querySelectorAll('.theme-btn').forEach(b=>b.classList.toggle('active',b.dataset.themeVal===t));
-}  const saved=localStorage.getItem('theme')||'dark';
-setTheme(saved);
-
-// ── Load sidebar data on init ─────────────────────────
-function initSidebar(){
-  loadReportHistory();
-  loadMemoryTopics();
-}
-initSidebar();
-
-// ── State ──────────────────────────────────────────────
-let isRunning = false;
-let lastPdfData = null;
-let selectedModel = 'llama-3.1-8b-instant';
-let selectedMode = 'crewai';
-let ragContextLoaded = false;
-let abortController = null;
-
-// ── Input handling ─────────────────────────────────────
-const input = document.getElementById('topicInput');
-const sendBtn = document.getElementById('sendBtn');
-
-input.addEventListener('input', ()=>{
-  sendBtn.disabled = !input.value.trim() || isRunning;
-});
-
-function autoResize(el){
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
-
-function handleKey(e){
-  if(e.key === 'Enter' && !e.shiftKey){
-    e.preventDefault();
-    submitTopic();
-  }
-}
-
-// ── Mode selector ──────────────────────────────────────
-function setMode(mode){
-  if(isRunning) return;
-  selectedMode = mode;
-  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
-  const pb = document.getElementById('pipelineBadge');
-  if(pb) pb.textContent = mode === 'crewai' ? 'CrewAI' : 'LangChain';
-  // Update header badge
-  const badge = document.getElementById('headerModeBadge');
-  if(badge){
-    badge.className = 'mode-badge ' + mode;
-    badge.textContent = mode === 'crewai' ? '🤖 CrewAI' : '🧩 LangChain';
-  }
-  // Update footer
-  const footer = document.getElementById('footerModeText');
-  if(footer) footer.textContent = mode === 'crewai' ? 'CrewAI' : 'LangChain';
-  ragContextLoaded = false;
-}
-
-// ── Model selector (removed — kept as no-op for compatibility)
-const modelSelect = document.getElementById('modelSelect');
-if(modelSelect){
-  modelSelect.addEventListener('change', function(){
-    selectedModel = this.value;
-    document.getElementById('modelBadge').textContent = this.value.split('-').slice(0,2).join('-');
-  });
-}
-
-// ── Quick topics ───────────────────────────────────────
-document.querySelectorAll('.quick-pill').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    if(isRunning) return;
-    input.value = btn.dataset.topic;
-    sendBtn.disabled = false;
-    autoResize(input);
-    input.focus();
-  });
-});
-
-function quickTopic(topic){
-  if(isRunning) return;
-  input.value = topic;
-  sendBtn.disabled = false;
-  autoResize(input);
-  submitTopic();
-}
-
-// ── Clear chat ─────────────────────────────────────────
-function clearChat(){
-  if(isRunning) return;
-  const inner = document.getElementById('messagesInner');
-  inner.innerHTML = `
-    <div class="welcome" id="welcomeScreen">
-      <div class="w-icon">R</div>
-      <h2>What would you like to research?</h2>
-      <p class="w-sub">Ask any topic and Resona will research, analyze, and write a comprehensive report using three AI agents.</p>
-      <div class="w-grid" id="welcomeGrid">${document.querySelector('.w-grid')?.innerHTML || ''}</div>
-    </div>
-  `;
-  document.getElementById('topicInput').value = '';
-  sendBtn.disabled = true;
-  document.getElementById('messagesContainer').scrollTop = 0;
-  ragContextLoaded = false;
-}
-
-// ── Submit topic ───────────────────────────────────────
-async function submitTopic(){
-  const topic = input.value.trim();
-  if(!topic || isRunning) return;
-  console.log('[Resona] submitTopic called, topic:', topic);
-
-  // Clear previous messages and start fresh (like ChatGPT)
-  clearChat();
-
-  // Add user message
-  addUserMessage(topic);
-
-  // Clear input
-  input.value = '';
-  sendBtn.disabled = true;
-  input.style.height = 'auto';
-
-  // Reset state for new run
-  lastPdfData = null;
-  ragContextLoaded = selectedMode === 'langchain';
-
-  // Start the agent
-  await runAgent(topic);
-  console.log('[Resona] runAgent returned');
-}
-
-// ── Add user message ───────────────────────────────────
-function addUserMessage(text){
-  const inner = document.getElementById('messagesInner');
-  const div = document.createElement('div');
-  div.className = 'msg msg-user';
-  div.innerHTML = `
-    <div class="msg-bubble">${escapeHtml(text)}</div>
-    <div class="msg-avatar">👤</div>
-  `;
-  inner.appendChild(div);
-  scrollToBottom();
-}
-
-// ── Add thinking indicator (mode-aware) ────────────────
-function addThinkingIndicator(mode){
-  const inner = document.getElementById('messagesInner');
-  const div = document.createElement('div');
-  div.className = 'thinking-indicator';
-  div.id = 'thinkingIndicator';
-  let stepsHtml = '';
-  if(mode === 'langchain'){
-    stepsHtml = `
-      <div class="ti-step" id="ti-research">
-        <div class="ti-dot"></div>
-        <span class="ti-label">🔗 Research Chain</span>
-        <span class="ti-status">waiting</span>
-      </div>
-      <div class="ti-step" id="ti-analysis">
-        <div class="ti-dot"></div>
-        <span class="ti-label">🔗 Analysis Chain</span>
-        <span class="ti-status">waiting</span>
-      </div>
-      <div class="ti-step" id="ti-writing">
-        <div class="ti-dot"></div>
-        <span class="ti-label">🔗 Writing Chain</span>
-        <span class="ti-status">waiting</span>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:4px;padding-left:4px">
-        <span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:4px">🧩 LangChain LCEL</span>
-        <span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:4px">📚 RAG ready</span>
-      </div>`;
-  } else {
-    stepsHtml = `
-      <div class="ti-step" id="ti-research">
-        <div class="ti-dot"></div>
-        <span class="ti-label">🔍 Senior Research Analyst</span>
-        <span class="ti-status">waiting</span>
-      </div>
-      <div class="ti-step" id="ti-analysis">
-        <div class="ti-dot"></div>
-        <span class="ti-label">🧠 Data Analyst</span>
-        <span class="ti-status">waiting</span>
-      </div>
-      <div class="ti-step" id="ti-writing">
-        <div class="ti-dot"></div>
-        <span class="ti-label">✍️ Technical Writer</span>
-        <span class="ti-status">waiting</span>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:4px;padding-left:4px">
-        <span style="font-size:10px;color:var(--text3);background:var(--bg2);padding:2px 8px;border-radius:4px">🤖 CrewAI Multi-Agent</span>
-      </div>`;
-  }
-  div.innerHTML = `
-    <div class="ti-avatar">R</div>
-    <div class="ti-content">
-      <div class="ti-steps" id="tiSteps">${stepsHtml}</div>
-    </div>
-  `;
-  inner.appendChild(div);
-  scrollToBottom();
-  return div;
-}
-
-function updateStep(phase, status, message){
-  const step = document.getElementById('ti-' + phase);
-  if(!step) return;
-  step.className = 'ti-step ' + status;
-  const statusEl = step.querySelector('.ti-status');
-  if(status === 'running'){
-    statusEl.textContent = message || 'running...';
-    // Show RAG badge on research step when in LangChain mode
-    if(phase === 'research' && selectedMode === 'langchain' && ragContextLoaded){
-      let ragBadge = step.querySelector('.rag-badge');
-      if(!ragBadge){
-        ragBadge = document.createElement('span');
-        ragBadge.className = 'rag-badge';
-        ragBadge.textContent = '📚 RAG context loaded';
-        step.appendChild(ragBadge);
-      }
-    }
-  } else if(status === 'complete'){
-    statusEl.textContent = '✅ done';
-  } else if(status === 'error'){
-    statusEl.textContent = '❌ failed';
-  }
-}
-
-function removeThinkingIndicator(){
-  const el = document.getElementById('thinkingIndicator');
-  if(el) el.remove();
-}
-
-// ── Add assistant message ──────────────────────────────
-function addAssistantMessage(){
-  const inner = document.getElementById('messagesInner');
-  const div = document.createElement('div');
-  div.className = 'msg msg-assistant';
-  div.id = 'assistantMsg';
-  div.innerHTML = `
-    <div class="msg-avatar">R</div>
-    <div class="msg-content">
-      <div class="msg-bubble cursor-blink" id="assistantBubble"></div>
-      <div class="pdf-prompt" id="pdfPrompt">
-        <span class="pp-icon">📄</span>
-        <div class="pp-text">
-          <div class="pp-title">Want this as a formatted PDF report?</div>
-          <div class="pp-desc">Get a beautifully styled PDF with title page, sections, and references</div>
-        </div>
-        <button class="btn btn-primary btn-sm" id="generatePdfBtn" onclick="generatePdf()">Generate PDF</button>
-      </div>
-      <div class="pdf-result" id="pdfResult"></div>
-    </div>
-  `;
-  inner.appendChild(div);
-  scrollToBottom();
-  return document.getElementById('assistantBubble');
-}
-
-// ── Run Agent ──────────────────────────────────────────
-async function runAgent(topic){
-  console.log('[Resona] runAgent started, mode:', selectedMode);
-  isRunning = true;
-  sendBtn.disabled = true;
-
-  // Show thinking indicator with mode-aware steps
-  addThinkingIndicator(selectedMode);
-  document.getElementById('cancelBtn').style.display = 'inline-flex';
-
-  // Prepare for streaming
-  let assistantBubble = null;
-  let fullContent = '';
-  let chunkBuffer = '';
-  let pdfData = null;
-
-  try{
-    abortController = new AbortController();
-    const response = await fetch('/api/run', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        topic: topic,
-        format: 'markdown+pdf',
-        depth: 'standard',
-        model: selectedModel,
-        mode: selectedMode
-      }),
-      signal: abortController.signal
-    });
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let currentEvent = '';
-    let eventCount = 0;
-
-    console.log('[Resona] Starting SSE stream read');
-    while(true){
-      const {done, value} = await reader.read();
-      if(done) {
-        console.log('[Resona] SSE stream done, total events processed:', eventCount);
-        break;
-      }
-      buffer += decoder.decode(value, {stream: true});
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for(const line of lines){
-        if(line.startsWith('event: ')){
-          currentEvent = line.slice(7).trim();
-          continue;
-        }
-        if(line.startsWith('data: ')){
-          const rawJson = line.slice(6);
-          try{
-            const data = JSON.parse(rawJson);
-            eventCount++;
-            console.log('[Resona] SSE event #' + eventCount + ':', currentEvent, data);
-            handleSSEEvent(currentEvent, data);
-          }catch(e){
-            console.error('[Resona] SSE parse error:', e, 'raw line:', rawJson, 'event:', currentEvent);
-          }
-        }
-      }
-    }
-  }catch(e){
-    if(e.name === 'AbortError'){
-      // User cancelled, already handled
-    } else {
-      showToast('Connection error: ' + e.message, 'error');
-    }
-  }finally{
-    isRunning = false;
-    sendBtn.disabled = !input.value.trim();
-    document.getElementById('cancelBtn').style.display = 'none';
-  }
-
-  function handleSSEEvent(type, data){
-    try {
-      switch(type){
-
-        case 'phase': {
-          const {phase, status, message} = data;
-          updateStep(phase, status, message);
-          break;
-        }
-
-        case 'content_start': {
-          console.log('[Resona] content_start — removing thinking indicator, adding assistant bubble');
-          removeThinkingIndicator();
-          assistantBubble = addAssistantMessage();
-          console.log('[Resona] assistantBubble set:', !!assistantBubble);
-          // Show RAG context panel if in LangChain mode
-          if(selectedMode === 'langchain' && ragContextLoaded){
-            const inner = document.getElementById('messagesInner');
-            const ragDiv = document.createElement('div');
-            ragDiv.className = 'rag-context';
-            ragDiv.id = 'ragContextPanel';
-            ragDiv.innerHTML = `
-              <button class="rc-header" onclick="toggleRagContext()">
-                <span class="rc-icon">📚</span>
-                <span class="rc-label">RAG context loaded from ChromaDB memory</span>
-                <span class="rc-toggle">▶</span>
-              </button>
-              <div class="rc-body" id="ragContextBody">
-                <p>Retrieved relevant context from prior research. The LangChain pipeline is using these past findings to generate a more informed report.</p>
-              </div>
-            `;
-            inner.insertBefore(ragDiv, inner.lastChild);
-          }
-          break;
-        }
-
-        case 'chunk': {
-          if(!assistantBubble) {
-            console.warn('[Resona] chunk received but no assistantBubble, re-creating');
-            removeThinkingIndicator();
-            assistantBubble = addAssistantMessage();
-          }
-          // Remove cursor blink during streaming
-          assistantBubble.classList.remove('cursor-blink');
-          fullContent += data.text;
-          // Render with marked if available
-          try{
-            assistantBubble.innerHTML = window.marked ? window.marked.parse(fullContent) : fullContent;
-          }catch(e){
-            console.warn('[Resona] marked parse error:', e);
-            assistantBubble.innerHTML = fullContent;
-          }
-          // Add cursor back
-          assistantBubble.classList.add('cursor-blink');
-          scrollToBottom();
-          break;
-        }
-
-        case 'complete': {
-          console.log('[Resona] complete event received, fullContent length:', (fullContent || '').length);
-          if(!assistantBubble){
-            console.warn('[Resona] complete event but no assistantBubble — re-creating');
-            removeThinkingIndicator();
-            assistantBubble = addAssistantMessage();
-          }
-          if(assistantBubble){
-            assistantBubble.classList.remove('cursor-blink');
-            // Render full content if chunks didn't stream it yet
-            if(fullContent){
-              try{
-                assistantBubble.innerHTML = window.marked ? window.marked.parse(fullContent) : fullContent;
-              }catch(e){
-                assistantBubble.innerHTML = fullContent;
-              }
-            }
-            // Add copy button to completed message
-            const content = assistantBubble.closest('.msg-content');
-            if(content && !content.querySelector('.copy-report-btn')){
-              const btnDiv = document.createElement('div');
-              btnDiv.style.cssText = 'display:flex;gap:6px;margin-top:8px;padding-left:4px';
-              btnDiv.innerHTML = '<button class="btn btn-sm btn-secondary copy-report-btn" onclick="copyReportContent()">📋 Copy Report</button>';
-              content.appendChild(btnDiv);
-              window._lastReportContent = fullContent;
-            }
-          }
-          lastPdfData = data;
-          // Show PDF prompt
-          const prompt = document.getElementById('pdfPrompt');
-          if(prompt){
-            prompt.classList.add('show');
-            prompt.scrollIntoView({behavior:'smooth', block:'center'});
-          }
-          showToast('✅ Research complete!', 'success');
-          // Refresh sidebar data
-          loadReportHistory();
-          loadMemoryTopics();
-          break;
-        }
-
-        case 'error': {
-          console.error('[Resona] error event:', data.message);
-          removeThinkingIndicator();
-          // Show error in a message
-          const inner = document.getElementById('messagesInner');
-          const div = document.createElement('div');
-          div.className = 'msg msg-assistant';
-          div.innerHTML = `
-            <div class="msg-avatar" style="background:var(--red)">✕</div>
-            <div class="msg-content">
-              <div class="msg-bubble" style="border-color:var(--red);background:var(--red-bg);color:var(--red)">
-                <strong>Error:</strong> ${escapeHtml(data.message)}
-              </div>
-            </div>
-          `;
-          inner.appendChild(div);
-          scrollToBottom();
-          showToast('❌ ' + data.message, 'error');
-          break;
-        }
-
-        default: {
-          console.warn('[Resona] unknown SSE event type:', type);
-        }
-      }
-    } catch(e) {
-      console.error('[Resona] Error in handleSSEEvent for type', type, ':', e);
-    }
-  }
-}
-
-// ── Cancel research ──────────────────────────────────
-function cancelResearch(){
-  if(abortController){
-    abortController.abort();
-    abortController = null;
-  }
-  isRunning = false;
-  sendBtn.disabled = !input.value.trim();
-  document.getElementById('cancelBtn').style.display = 'none';
-  removeThinkingIndicator();
-  showToast('⏹ Research cancelled', 'info');
-}
-
-// ── Generate PDF from the research result ──────────────
-function generatePdf(){
-  const btn = document.getElementById('generatePdfBtn');
-  if(!btn || btn.disabled) return;
-  btn.disabled = true;
-  btn.textContent = '⏳ Generating...';
-
-  const data = lastPdfData;
-  if(!data){
-    showToast('No research data available. Run a query first.', 'error');
-    btn.disabled = false;
-    btn.textContent = 'Generate PDF';
-    return;
-  }
-
-  const mdBasename = data.markdown_basename;
-  const pdfBasename = data.pdf_basename;
-  const topic = data.topic || 'Report';
-
-  const pdfResult = document.getElementById('pdfResult');
-  if(pdfBasename && data.has_pdf){
-    pdfResult.innerHTML = `
-      <span class="pr-icon">📕</span>
-      <div class="pr-text">
-        <div class="pr-title">✅ PDF Report Ready</div>
-        <div class="pr-desc">${escapeHtml(topic)}</div>
-      </div>
-      <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${pdfBasename.replace('.pdf','.md')}/pdf','_blank')">⬇ Download PDF</button>
-      ${mdBasename ? `<button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${mdBasename}','_blank')">⬇ Download MD</button>` : ''}
-    `;
-  } else if(mdBasename){
-    pdfResult.innerHTML = `
-      <span class="pr-icon">📄</span>
-      <div class="pr-text">
-        <div class="pr-title">✅ Markdown Report Ready</div>
-        <div class="pr-desc">${escapeHtml(topic)}</div>
-      </div>
-      <button class="btn btn-sm btn-secondary" onclick="window.open('/api/reports/${mdBasename}','_blank')">⬇ Download MD</button>
-    `;
-  } else {
-    pdfResult.innerHTML = `<div class="pr-text"><div class="pr-title">Report saved on server</div></div>`;
-  }
-  pdfResult.classList.add('show');
-  btn.textContent = '✅ Generated';
-  showToast('📕 Report ready for download!', 'success');
-}
-
-// ── Toggle RAG context panel ───────────────────────────
-function toggleRagContext(){
-  const body = document.getElementById('ragContextBody');
-  const toggle = document.querySelector('.rag-context .rc-toggle');
-  if(body){
-    body.classList.toggle('open');
-    if(toggle) toggle.classList.toggle('open');
-  }
-}
-
-// ── Utilities ──────────────────────────────────────────
-function escapeHtml(text){
-  const d = document.createElement('div');
-  d.textContent = text;
-  return d.innerHTML.replace(/'/g, '&#39;');
-}
-
-function scrollToBottom(){
-  const container = document.getElementById('messagesContainer');
-  requestAnimationFrame(() => {
-    container.scrollTop = container.scrollHeight;
-  });
-}
-
-function showToast(message, type='info'){
-  const toast = document.getElementById('toast');
-  toast.className = 'toast show ' + type;
-  const icons = {success:'✅', error:'❌', info:'ℹ️', warning:'⚠️'};
-  toast.innerHTML = `<span>${icons[type]||'ℹ️'}</span><span>${message}</span>`;
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(()=>toast.classList.remove('show'), 4000);
 }
 </script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<script type="module">
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createRoot } from 'react-dom/client';
+import { marked } from 'marked';
+
+const h = React.createElement;
+const API_BASE = window.RESONA_API_BASE || '';
+
+// ===== ADAPTED API FOR EXISTING BACKEND =====
+async function fetchReports() {
+  try {
+    const r = await fetch(`${API_BASE}/api/reports`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    // Our backend returns { reports: [{filename, name, date, ...}] }
+    return (data.reports || []).map((rep, i) => ({
+      id: rep.filename || String(i),
+      title: rep.name || rep.filename || 'Untitled',
+      created_at: rep.date || '',
+      filename: rep.filename,
+      has_pdf: rep.has_pdf || false,
+    }));
+  } catch { return []; }
+}
+
+async function fetchMemoryTopics() {
+  try {
+    const r = await fetch(`${API_BASE}/memory/topics`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return data.topics || [];
+  } catch { return []; }
+}
+
+async function fetchReportContent(filename) {
+  try {
+    const r = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(filename)}`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function runResearch({ query, pipeline, signal, onEvent }) {
+  // Adapt to our backend API: {topic, format, depth, model, mode}
+  const res = await fetch(`${API_BASE}/api/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({
+      topic: query,
+      format: 'markdown+pdf',
+      depth: 'standard',
+      model: 'llama-3.1-8b-instant',
+      mode: pipeline,
+    }),
+    signal,
+  });
+  if (!res.ok || !res.body) { onEvent({ type: 'error', message: `Request failed: ${res.status}` }); return; }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Accumulate lines into complete SSE events
+    while (true) {
+      const idx = buffer.indexOf('\n');
+      if (idx === -1) break;
+      const line = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 1);
+      handleSSELine(line, eventAccum, onEvent);
+    }
+  }
+  // Flush any remaining accumulated event
+  if (eventAccum.dataLines.length > 0) {
+    const ev = buildSSEEvent(eventAccum.eventType, eventAccum.dataLines.join('\n'));
+    if (ev) onEvent(ev);
+  }
+}
+
+// SSE event accumulator state
+const eventAccum = { eventType: 'message', dataLines: [] };
+
+function handleSSELine(line, accum, onEvent) {
+  if (line.startsWith('event:')) {
+    // Emit previous accumulated event if any
+    if (accum.dataLines.length > 0) {
+      const ev = buildSSEEvent(accum.eventType, accum.dataLines.join('\n'));
+      if (ev) onEvent(ev);
+      accum.dataLines = [];
+    }
+    accum.eventType = line.slice(6).trim();
+  } else if (line.startsWith('data:')) {
+    accum.dataLines.push(line.slice(5).trim());
+  } else if (!line.trim() && accum.dataLines.length > 0) {
+    // Empty line = end of event
+    const ev = buildSSEEvent(accum.eventType, accum.dataLines.join('\n'));
+    if (ev) onEvent(ev);
+    accum.dataLines = [];
+    accum.eventType = 'message';
+  }
+}
+
+function buildSSEEvent(eventType, dataStr) {
+  let p = {};
+  try { p = dataStr ? JSON.parse(dataStr) : {}; } catch { p = { raw: dataStr }; }
+  switch (eventType) {
+    case 'phase': return { type: 'phase', phase: p.phase || p.name || '', status: p.status || 'running', message: p.message || '' };
+    case 'content_start': return { type: 'content_start' };
+    case 'chunk': return { type: 'chunk', text: p.text || p.delta || p.content || '' };
+    case 'complete': return { type: 'complete', report: p };
+    case 'error': return { type: 'error', message: p.message || 'Unknown error' };
+    default: return null;
+  }
+}
+
+// ===== ICONS =====
+const Icon = ({ d, size = 16, stroke = 2 }) =>
+  h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round', strokeLinejoin: 'round' },
+    Array.isArray(d) ? d.map((p, i) => h('path', { key: i, d: p })) : h('path', { d }));
+const I = {
+  plus:    () => h(Icon, { d: ['M12 5v14', 'M5 12h14'] }),
+  menu:    () => h(Icon, { d: ['M3 6h18','M3 12h18','M3 18h18'] }),
+  send:    () => h(Icon, { d: ['M12 19V5','M5 12l7-7 7 7'], stroke: 2.5 }),
+  stop:    () => h('svg', { width:14, height:14, viewBox:'0 0 24 24', fill:'currentColor' }, h('rect',{x:6,y:6,width:12,height:12,rx:1})),
+  copy:    () => h(Icon, { d: ['M9 9h10v10H9z','M5 15V5h10'] }),
+  check:   () => h(Icon, { d: 'M5 13l4 4L19 7' }),
+  refresh: () => h(Icon, { d: ['M3 12a9 9 0 0 1 15-6.7L21 8','M21 3v5h-5','M21 12a9 9 0 0 1-15 6.7L3 16','M3 21v-5h5'] }),
+  download:() => h(Icon, { d: ['M12 3v12','M7 10l5 5 5-5','M5 21h14'] }),
+  sparkle: () => h(Icon, { d: 'M12 3l1.9 4.8L18.7 9.7l-4.8 1.9L12 16.4l-1.9-4.8L5.3 9.7l4.8-1.9L12 3z' }),
+  sun:     () => h(Icon, { d: ['M12 4V2','M12 22v-2','M4.93 4.93l1.41 1.41','M17.66 17.66l1.41 1.41','M2 12h2','M20 12h2','M4.93 19.07l1.41-1.41','M17.66 6.34l1.41-1.41','M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z'] }),
+  moon:    () => h(Icon, { d: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z' }),
+  doc:     () => h(Icon, { d: ['M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z','M14 3v6h6'] }),
+  book:    () => h(Icon, { d: ['M4 19.5A2.5 2.5 0 0 1 6.5 17H20','M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z'] }),
+  load:    () => h(Icon, { d: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4','M7 9l5 5 5-5','M12 14V3'] }),
+};
+
+// ===== COMPONENTS =====
+function Sidebar({ collapsed, onToggle, onNewResearch, reports, memories, theme, onToggleTheme, onLoadReport, onMemoryResearch }) {
+  return h('aside', {
+    className: `shrink-0 transition-all duration-300 border-r border-border bg-surface/40 flex flex-col ${collapsed ? 'w-14' : 'w-64'}`
+  },
+    h('div', { className: 'h-14 flex items-center gap-2 px-3 border-b border-border' },
+      h('button', { type: 'button', onClick: onToggle, className: 'p-2 rounded-md hover:bg-surface-hover text-muted' }, h(I.menu)),
+      !collapsed && h('div', { className: 'flex items-center gap-2' },
+        h('div', { className: 'w-7 h-7 rounded-lg grid place-items-center bg-gradient-to-br from-primary to-primary/60 text-primary-fg' }, h(I.sparkle)),
+        h('span', { className: 'font-semibold tracking-tight' }, 'Resona')
+      )
+    ),
+    h('div', { className: 'p-3' },
+      h('button', {
+        type: 'button',
+        onClick: onNewResearch,
+        className: `w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-fg hover:opacity-90 text-sm font-medium ${collapsed ? 'justify-center' : ''}`
+      }, h(I.plus), !collapsed && 'New Research')
+    ),
+    !collapsed && h('div', { className: 'flex-1 overflow-y-auto scroll-thin px-2' },
+      h('div', { className: 'text-[11px] uppercase tracking-wider text-muted px-2 mt-2 mb-1' }, 'Report History'),
+      reports.length === 0
+        ? h('div', { className: 'text-xs text-muted px-2 py-3' }, 'No reports yet')
+        : reports.map(r => h('button', {
+            key: r.id,
+            onClick: () => onLoadReport(r),
+            className: 'w-full text-left px-2.5 py-2 rounded-md hover:bg-surface-hover text-sm'
+          },
+            h('div', { className: 'truncate text-foreground' }, r.title || 'Untitled'),
+            h('div', { className: 'text-[11px] text-muted mt-0.5' }, r.created_at || '')
+          )),
+      h('div', { className: 'text-[11px] uppercase tracking-wider text-muted px-2 mt-5 mb-1' }, 'Memory Topics'),
+      memories.length === 0
+        ? h('div', { className: 'text-xs text-muted px-2 py-1.5' }, 'No memories yet')
+        : memories.map(t => h('button', {
+            key: t,
+            onClick: () => onMemoryResearch(t),
+            className: 'w-full text-left px-2.5 py-2 rounded-md hover:bg-surface-hover text-sm flex items-center gap-2'
+          },
+            h('span', { className: 'w-1.5 h-1.5 rounded-full bg-green-500 shrink-0' }),
+            h('span', { className: 'truncate text-foreground' }, t)
+          ))
+    ),
+    !collapsed && h('div', { className: 'border-t border-border p-3 flex items-center justify-between' },
+      h('span', { className: 'text-xs text-muted' }, 'Theme'),
+      h('button', {
+        onClick: onToggleTheme,
+        className: 'p-1.5 rounded-md hover:bg-surface-hover text-muted'
+      }, theme === 'dark' ? h(I.sun) : h(I.moon))
+    )
+  );
+}
+
+function EmptyState({ onPick }) {
+  const items = [
+    { icon: I.book, label: 'Market analysis', desc: 'Latest trends in AI infrastructure investments' },
+    { icon: I.doc, label: 'Scientific deep dive', desc: 'State of CRISPR gene editing in 2025' },
+    { icon: I.book, label: 'Geopolitics', desc: 'Implications of the EU AI Act for global startups' },
+    { icon: I.doc, label: 'Technology landscape', desc: 'Compare modern vector databases' },
+  ];
+  return h('div', { className: 'flex flex-col items-center justify-center px-6 py-12 max-w-3xl mx-auto w-full' },
+    h('div', { className: 'w-14 h-14 rounded-2xl grid place-items-center bg-gradient-to-br from-primary to-primary/60 text-primary-fg shadow-lg shadow-primary/20 mb-5' }, h(I.sparkle)),
+    h('h1', { className: 'text-2xl font-semibold tracking-tight' }, 'Resona'),
+    h('p', { className: 'mt-2 text-[15px] text-muted text-center' }, 'Ask anything. Get a researched, cited report.'),
+    h('div', { className: 'grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-10 w-full' },
+      items.map(it => h('button', {
+        key: it.label,
+        onClick: () => onPick(it.desc),
+        className: 'text-left p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover hover:border-primary/40 transition'
+      },
+        h('div', { className: 'flex items-start gap-3' },
+          h('div', { className: 'p-1.5 rounded-md border border-border text-primary' }, h(it.icon)),
+          h('div', null,
+            h('div', { className: 'text-[13px] font-medium' }, it.label),
+            h('div', { className: 'text-[12.5px] text-muted mt-0.5' }, it.desc)
+          )
+        )
+      ))
+    )
+  );
+}
+
+function UserMessage({ content }) {
+  return h('div', { className: 'message-in flex justify-end' },
+    h('div', { className: 'max-w-[78%] rounded-2xl rounded-tr-md bg-primary text-primary-fg px-4 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap' }, content)
+  );
+}
+
+function AssistantMessage({ message, onRegenerate }) {
+  const [copied, setCopied] = useState(false);
+  const streaming = message.status === 'streaming';
+  const html = message.content ? marked.parse(message.content, { breaks: true }) : '';
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const download = () => {
+    const w = window.open('', '_blank'); if (!w) return;
+    w.document.write(`<html><head><title>Resona Report</title>
+      <style>body{font-family:Inter,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.7;color:#222}</style>
+      </head><body>${marked.parse(message.content)}</body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 200);
+  };
+
+  return h('div', { className: 'message-in' },
+    streaming && message.phase && h('div', { className: 'text-[12px] text-muted mb-3 flex items-center gap-2' },
+      h('span', { className: 'thinking-dot' }),
+      h('span', { className: 'thinking-dot', style: { animationDelay: '.2s' } }),
+      h('span', { className: 'thinking-dot', style: { animationDelay: '.4s' } }),
+      h('span', { className: 'ml-1' }, message.phase)
+    ),
+    message.content
+      ? h('div', { className: 'prose-resona', dangerouslySetInnerHTML: { __html: html } })
+      : streaming && h('div', { className: 'flex items-center gap-1.5 py-2' },
+          h('span', { className: 'thinking-dot' }),
+          h('span', { className: 'thinking-dot', style: { animationDelay: '.2s' } }),
+          h('span', { className: 'thinking-dot', style: { animationDelay: '.4s' } })
+        ),
+    !streaming && message.content && h('div', { className: 'mt-4 flex items-center gap-1 text-muted' },
+      h('button', { onClick: copy, title: 'Copy', className: 'p-1.5 rounded-md hover:bg-surface hover:text-foreground' }, copied ? h(I.check) : h(I.copy)),
+      h('button', { onClick: download, title: 'Download', className: 'p-1.5 rounded-md hover:bg-surface hover:text-foreground' }, h(I.download)),
+      onRegenerate && h('button', { onClick: onRegenerate, title: 'Regenerate', className: 'p-1.5 rounded-md hover:bg-surface hover:text-foreground' }, h(I.refresh))
+    )
+  );
+}
+
+function InputBar({ value, onChange, onSubmit, onStop, isStreaming, pipeline, onPipelineChange }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, [value]);
+  return h('div', { className: 'px-4 pb-4 pt-2' },
+    h('div', { className: 'max-w-3xl mx-auto w-full' },
+      h('div', { className: 'flex justify-center mb-2.5' },
+        h('div', { className: 'inline-flex items-center gap-0.5 p-0.5 rounded-full bg-surface border border-border text-[11.5px]' },
+          ['crewai', 'langchain'].map(p => h('button', {
+            key: p,
+            onClick: () => onPipelineChange(p),
+            className: `px-3 py-1 rounded-full font-medium transition ${pipeline === p ? 'bg-primary text-primary-fg' : 'text-muted hover:text-foreground'}`
+          }, p === 'crewai' ? 'CrewAI' : 'LangChain'))
+        )
+      ),
+      h('form', {
+        onSubmit: (e) => { e.preventDefault(); if (!isStreaming && value.trim()) onSubmit(); },
+        className: 'relative flex items-end gap-2 rounded-2xl border border-border bg-surface focus-within:border-primary/50 p-2 pl-4 shadow-lg shadow-black/20'
+      },
+        h('textarea', {
+          ref,
+          value,
+          onChange: (e) => onChange(e.target.value),
+          onKeyDown: (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (!isStreaming && value.trim()) onSubmit();
+            }
+          },
+          id: 'query-input',
+          name: 'query',
+          placeholder: 'Ask anything to research...',
+          rows: 1,
+          className: 'flex-1 resize-none bg-transparent outline-none text-[15px] leading-relaxed py-1.5 placeholder:text-muted/70 max-h-[200px]'
+        }),
+        isStreaming
+          ? h('button', { type: 'button', onClick: onStop, title: 'Stop',
+              className: 'shrink-0 grid place-items-center w-9 h-9 rounded-xl bg-foreground text-background hover:opacity-90' }, h(I.stop))
+          : h('button', { type: 'submit', disabled: !value.trim(), title: 'Send',
+              className: 'shrink-0 grid place-items-center w-9 h-9 rounded-xl bg-primary text-primary-fg disabled:opacity-40 hover:opacity-90' }, h(I.send))
+      ),
+      h('p', { className: 'text-[11px] text-muted/70 text-center mt-2' }, 'Resona may produce inaccurate information. Verify important facts.')
+    )
+  );
+}
+
+// ===== APP =====
+const PHASE = { researching: 'Researching', analyzing: 'Analyzing', writing: 'Writing', planning: 'Planning' };
+const prettyPhase = (p) => PHASE[String(p).toLowerCase()] || (p.charAt(0).toUpperCase() + p.slice(1));
+
+function App() {
+  const [collapsed, setCollapsed] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [pipeline, setPipeline] = useState('crewai');
+  const [streaming, setStreaming] = useState(false);
+  const [reports, setReports] = useState([]);
+  const [memories, setMemories] = useState([]);
+  const abortRef = useRef(null);
+  const scrollRef = useRef(null);
+  const [lastPdfData, setLastPdfData] = useState(null);
+
+  // Theme side effect
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  // Fetch reports and memories on mount
+  const refreshReports = useCallback(() => { fetchReports().then(setReports); }, []);
+  const refreshMemories = useCallback(() => { fetchMemoryTopics().then(setMemories); }, []);
+
+  useEffect(() => { refreshReports(); refreshMemories(); }, [refreshReports, refreshMemories]);
+
+  // Auto-scroll
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages]);
+
+  // Handle loading a report
+  const handleLoadReport = useCallback(async (report) => {
+    if (streaming) return;
+    const data = await fetchReportContent(report.filename);
+    if (!data || data.error) return;
+    setMessages([
+      { id: crypto.randomUUID(), role: 'user', content: '📂 Loaded: ' + (data.topic || report.title) },
+      { id: crypto.randomUUID(), role: 'assistant', content: data.content, status: 'complete' },
+    ]);
+  }, [streaming]);
+
+  // Handle memory topic click
+  const handleMemoryResearch = useCallback((topic) => {
+    if (streaming) return;
+    setInput(topic);
+  }, [streaming]);
+
+  // Submit research
+  const handleSubmit = useCallback(async (override) => {
+    const q = (override ?? input).trim();
+    if (!q || streaming) return;
+    const userId = crypto.randomUUID();
+    const asstId = crypto.randomUUID();
+    setMessages(m => [...m,
+      { id: userId, role: 'user', content: q },
+      { id: asstId, role: 'assistant', content: '', status: 'streaming', phase: 'Researching' }
+    ]);
+    setInput('');
+    setStreaming(true);
+    setLastPdfData(null);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      await runResearch({
+        query: q, pipeline, signal: ctrl.signal,
+        onEvent: (ev) => {
+          switch (ev.type) {
+            case 'phase':
+              setMessages(m => m.map(msg =>
+                msg.id === asstId ? { ...msg, phase: prettyPhase(ev.phase) } : msg
+              ));
+              break;
+            case 'content_start':
+              setMessages(m => m.map(msg =>
+                msg.id === asstId ? { ...msg, phase: undefined } : msg
+              ));
+              break;
+            case 'chunk':
+              setMessages(m => m.map(msg =>
+                msg.id === asstId ? { ...msg, content: msg.content + ev.text } : msg
+              ));
+              break;
+            case 'complete':
+              setMessages(m => m.map(msg =>
+                msg.id === asstId
+                  ? { ...msg, content: ev.report?.markdown || msg.content, status: 'complete', phase: undefined }
+                  : msg
+              ));
+              setLastPdfData(ev.report);
+              refreshReports();
+              refreshMemories();
+              break;
+            case 'error':
+              setMessages(m => m.map(msg =>
+                msg.id === asstId
+                  ? { ...msg, content: msg.content + `\n\n> **Error:** ${ev.message}`, status: 'error', phase: undefined }
+                  : msg
+              ));
+              break;
+          }
+        }
+      });
+    } catch (_) {
+      setMessages(m => m.map(msg =>
+        msg.id === asstId && msg.status === 'streaming'
+          ? { ...msg, status: 'complete', phase: undefined, content: msg.content || '_Request stopped._' }
+          : msg
+      ));
+    } finally {
+      setMessages(m => m.map(msg =>
+        msg.id === asstId
+          ? { ...msg, status: msg.status === 'streaming' ? 'complete' : msg.status, phase: undefined }
+          : msg
+      ));
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [input, pipeline, streaming, refreshReports, refreshMemories]);
+
+  const stop = () => abortRef.current?.abort();
+  const newResearch = () => { if (streaming) stop(); setMessages([]); setInput(''); setLastPdfData(null); };
+  const regenerate = (idx) => {
+    const prevUser = [...messages.slice(0, idx)].reverse().find(m => m.role === 'user');
+    if (!prevUser) return;
+    setMessages(m => m.slice(0, idx));
+    handleSubmit(prevUser.content);
+  };
+
+  return h('div', { className: 'flex h-screen w-full overflow-hidden' },
+    h(Sidebar, {
+      collapsed,
+      onToggle: () => setCollapsed(c => !c),
+      onNewResearch: newResearch,
+      reports,
+      memories,
+      theme,
+      onToggleTheme: () => setTheme(t => t === 'dark' ? 'light' : 'dark'),
+      onLoadReport: handleLoadReport,
+      onMemoryResearch: handleMemoryResearch,
+    }),
+    h('main', { className: 'flex-1 flex flex-col min-w-0' },
+      h('header', { className: 'h-14 border-b border-border flex items-center justify-between px-5 shrink-0' },
+        h('div', { className: 'text-[13px] font-medium tracking-tight text-foreground/80 truncate' },
+          messages.length === 0 ? 'New research' : (messages[0]?.content || '').slice(0, 60)
+        ),
+        h('div', { className: 'text-[11px] text-muted flex items-center gap-3' },
+          lastPdfData && h('button', {
+            onClick: () => {
+              const d = lastPdfData;
+              const url = d.pdf_basename
+                ? `/api/reports/${d.pdf_basename.replace('.pdf','.md')}/pdf`
+                : d.markdown_basename ? `/api/reports/${d.markdown_basename}` : null;
+              if (url) window.open(url, '_blank');
+            },
+            className: 'text-[11px] text-primary hover:underline'
+          }, '⬇ PDF'),
+          h('span', {}, `Pipeline: ${pipeline === 'crewai' ? 'CrewAI' : 'LangChain'}`)
+        )
+      ),
+      h('div', { ref: scrollRef, className: 'flex-1 overflow-y-auto scroll-thin' },
+        messages.length === 0
+          ? h('div', { className: 'h-full flex items-center justify-center' }, h(EmptyState, { onPick: (q) => setInput(q) }))
+          : h('div', { className: 'max-w-3xl mx-auto w-full px-5 py-8 space-y-7' },
+              messages.map((m, i) => m.role === 'user'
+                ? h(UserMessage, { key: m.id, content: m.content })
+                : h(AssistantMessage, {
+                    key: m.id,
+                    message: m,
+                    onRegenerate: m.status === 'complete' ? () => regenerate(i) : undefined
+                  })
+              )
+            )
+      ),
+      h(InputBar, {
+        value: input,
+        onChange: setInput,
+        onSubmit: () => handleSubmit(),
+        onStop: stop,
+        isStreaming: streaming,
+        pipeline,
+        onPipelineChange: setPipeline,
+      })
+    )
+  );
+}
+
+createRoot(document.getElementById('root')).render(h(App));
+</script>
 </body>
 </html>
