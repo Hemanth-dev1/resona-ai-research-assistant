@@ -98,6 +98,7 @@ def _format_dimensions_feedback(dimensions: List[DimensionScore]) -> str:
 def _run_llm_call(system_prompt: str, human_prompt: str) -> str:
     """Execute an LLM call for the critic loop.
 
+    Uses the capable (70B) model for quality scoring and revision.
     Retries with exponential backoff on failure via @default_retry.
 
     Args:
@@ -107,9 +108,9 @@ def _run_llm_call(system_prompt: str, human_prompt: str) -> str:
     Returns:
         The LLM response text.
     """
-    from llm_config import get_llm
+    from llm_config import get_capable_llm
 
-    llm = get_llm(temperature=0.2)  # Low temperature for consistent scoring
+    llm = get_capable_llm(temperature=0.2)  # Low temperature for consistent scoring
     messages = [
         ("system", system_prompt),
         ("human", human_prompt),

@@ -357,11 +357,11 @@ function InputBar({ value, onChange, onSubmit, onStop, isStreaming, pipeline, on
     h('div', { className: 'max-w-3xl mx-auto w-full' },
       h('div', { className: 'flex justify-center mb-2.5' },
         h('div', { className: 'inline-flex items-center gap-0.5 p-0.5 rounded-full bg-surface border border-border text-[11.5px]' },
-          ['crewai', 'langchain'].map(p => h('button', {
+          ['langgraph', 'crewai', 'langchain'].map(p => h('button', {
             key: p,
             onClick: () => onPipelineChange(p),
             className: `px-3 py-1 rounded-full font-medium transition ${pipeline === p ? 'bg-primary text-primary-fg' : 'text-muted hover:text-foreground'}`
-          }, p === 'crewai' ? 'CrewAI' : 'LangChain'))
+          }, p === 'langgraph' ? 'LangGraph' : p === 'crewai' ? 'CrewAI' : 'LangChain'))
         )
       ),
       h('form', {
@@ -396,7 +396,7 @@ function InputBar({ value, onChange, onSubmit, onStop, isStreaming, pipeline, on
 }
 
 // ===== APP =====
-const PHASE = { researching: 'Researching', analyzing: 'Analyzing', writing: 'Writing', planning: 'Planning' };
+const PHASE = { researching: 'Researching', analyzing: 'Analyzing', writing: 'Writing', planning: 'Planning', verifying: 'Verifying' };
 const prettyPhase = (p) => PHASE[String(p).toLowerCase()] || (p.charAt(0).toUpperCase() + p.slice(1));
 
 function App() {

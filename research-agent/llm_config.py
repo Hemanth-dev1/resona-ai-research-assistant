@@ -30,6 +30,20 @@ PROVIDER_DEFAULT_MODELS = {
     LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20240620",
 }
 
+# Fast (cheap/light) models for Planner, Research, Verification nodes
+PROVIDER_FAST_MODELS = {
+    LLMProvider.GROQ: "llama-3.1-8b-instant",
+    LLMProvider.OPENAI: "gpt-4o-mini",
+    LLMProvider.ANTHROPIC: "claude-3-5-haiku-20241022",
+}
+
+# Capable (high-quality) models for Analyst, Writer, Critic nodes
+PROVIDER_CAPABLE_MODELS = {
+    LLMProvider.GROQ: "llama-3.3-70b-versatile",
+    LLMProvider.OPENAI: "gpt-4o",
+    LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20240620",
+}
+
 # Base URLs per provider
 PROVIDER_BASE_URLS = {
     LLMProvider.GROQ: "https://api.groq.com/openai/v1",
@@ -93,6 +107,45 @@ def get_model_name(provider: Optional[LLMProvider] = None) -> str:
     return os.getenv("LLM_MODEL", PROVIDER_DEFAULT_MODELS[provider])
 
 
+def get_fast_model_name(provider: Optional[LLMProvider] = None) -> str:
+    """Get the fast/cheap model name for low-complexity tasks.
+
+    Checks LLM_MODEL_FAST env var first, then falls back to PROVIDER_FAST_MODELS.
+    Falls back to the default model name if LLM_MODEL_FAST is not set.
+
+    Args:
+        provider: The LLM provider. If None, uses the configured provider.
+
+    Returns:
+        Fast model name string (e.g., llama-3.1-8b-instant, gpt-4o-mini).
+    """
+    if provider is None:
+        provider = get_provider()
+
+    return os.getenv("LLM_MODEL_FAST", PROVIDER_FAST_MODELS.get(provider, PROVIDER_DEFAULT_MODELS[provider]))
+
+
+def get_capable_model_name(provider: Optional[LLMProvider] = None) -> str:
+    """Get the capable/high-quality model for complex reasoning tasks.
+
+    Checks LLM_MODEL_CAPABLE env var first, then falls back to PROVIDER_CAPABLE_MODELS.
+
+    Args:
+        provider: The LLM provider. If None, uses the configured provider.
+
+    Returns:
+        Capable model name string (e.g., llama-3.3-70b-versatile, gpt-4o).
+    """
+    if provider is None:
+        provider = get_provider()
+
+    model = os.getenv("LLM_MODEL_CAPABLE", PROVIDER_CAPABLE_MODELS.get(provider))
+    if not model:
+        # Fall back to the default LLM_MODEL if no capable default is defined
+        return os.getenv("LLM_MODEL", PROVIDER_DEFAULT_MODELS[provider])
+    return model
+
+
 def get_api_key(provider: Optional[LLMProvider] = None) -> Optional[str]:
     """Get the API key for the given provider.
 
@@ -109,7 +162,7 @@ def get_api_key(provider: Optional[LLMProvider] = None) -> Optional[str]:
     return os.getenv(env_var)
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=4)
 def get_llm(
     provider: Optional[LLMProvider] = None,
     model: Optional[str] = None,
@@ -195,7 +248,51 @@ def get_llm(
         raise ValueError(f"Unsupported provider: {provider}")
 
 
-def setup_crewai_env(provider: Optional[LLMProvider] = None) -> None:
+def get_fast_llm(
+    provider: Optional[LLMProvider] = None,
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+) -> Any:
+    """Get a fast/cheap LLM for simple tasks (Planner, Research, Verification).
+
+    Uses LLM_MODEL_FAST or the provider's fast model default.
+
+    Args:
+        provider: LLM provider. If None, uses LLM_PROVIDER env var.
+        temperature: Sampling temperature (default: 0.3).
+        max_tokens: Maximum tokens in response (default: 4096).
+
+    Returns:
+        An LLM instance configured with the fast model.
+    """
+    provider = provider or get_provider()
+    model = get_fast_model_name(provider)
+    return get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
+
+
+def get_capable_llm(
+    provider: Optional[LLMProvider] = None,
+    temperature: float = 0.3,
+    max_tokens: int = 8192,
+) -> Any:
+    """Get a capable/high-quality LLM for complex reasoning (Analyst, Writer, Critic).
+
+    Uses LLM_MODEL_CAPABLE or the provider's capable model default.
+
+    Args:
+        provider: LLM provider. If None, uses LLM_PROVIDER env var.
+        temperature: Sampling temperature (default: 0.3).
+        max_tokens: Maximum tokens in response (default: 8192 for longer outputs).
+
+    Returns:
+        An LLM instance configured with the capable model.
+    """
+    provider = provider or get_provider()
+    model = get_capable_model_name(provider)
+    return get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
+
+
+def setup_crewai_env(provider: Optional[LLMProvider] = None, model: Optional[str] = None) -> None:
     """Set environment variables for CrewAI to use the configured provider.
 
     CrewAI reads OpenAI-compatible env vars (OPENAI_API_KEY, OPENAI_BASE_URL,
@@ -203,12 +300,14 @@ def setup_crewai_env(provider: Optional[LLMProvider] = None) -> None:
 
     Args:
         provider: The LLM provider. If None, uses the configured provider.
+        model: Optional model override. If None, uses the default (capable) model.
     """
     if provider is None:
         provider = get_provider()
 
     api_key = get_api_key(provider)
-    model = get_model_name(provider)
+    # CrewAI agents all share one env var model; default to capable for quality
+    model = model or get_capable_model_name(provider)
 
     if provider == LLMProvider.GROQ:
         os.environ["OPENAI_BASE_URL"] = PROVIDER_BASE_URLS[LLMProvider.GROQ]

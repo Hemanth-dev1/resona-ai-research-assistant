@@ -33,6 +33,10 @@ setup_tracing()
 from llm_config import setup_crewai_env, get_provider
 setup_crewai_env()
 
+# Initialize orchestrator config
+from orchestrator import get_mode as get_orch_mode
+get_orch_mode()  # Validate ORCHESTRATION env var at startup
+
 app = FastAPI(title="Resona", version="1.1.0")
 
 OUTPUT_DIR = Path(__file__).parent / "output"
@@ -88,8 +92,11 @@ def _chunk_report(text: str, min_chunk: int = 200) -> list[str]:
     return chunks if chunks else [text]
 
 
-async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "markdown+pdf", model: str = None, mode: str = "crewai"):
-    """Yield SSE events as the agent pipeline progresses and content streams."""
+async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "markdown+pdf", model: str = None, mode: str = None):
+    """Yield SSE events as the agent pipeline progresses and content streams.
+
+    Orchestrates: plan → parallel research (throttled) → analysis → writing → stream
+    """
 
     def send(event: str, data: dict):
         return {"event": event, "data": json.dumps(data)}
@@ -103,241 +110,202 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
             yield send("error", {"message": f"{key_name} not found in .env file for provider '{provider.value}'."})
             return
 
-        if mode == "langchain":
-            # === LANGCHAIN MODE ===
-            yield send("phase", {
-                "phase": "research", "status": "running",
-                "message": "🔍 LangChain: Researching topic...",
-                "progress": 10,
-            })
-            await asyncio.sleep(0.2)
+        # Resolve mode from orchestrator if not specified
+        if mode is None:
+            from orchestrator import get_mode as get_orch_mode
+            mode = get_orch_mode().value
 
-            yield send("phase", {
-                "phase": "research", "status": "complete",
-                "message": "✅ Research complete. Analyzing...",
-                "progress": 30,
-            })
-            await asyncio.sleep(0.2)
-
-            yield send("phase", {
-                "phase": "analysis", "status": "running",
-                "message": "🧠 LangChain: Analyzing findings...",
-                "progress": 45,
-            })
-            await asyncio.sleep(0.2)
-
-            yield send("phase", {
-                "phase": "analysis", "status": "complete",
-                "message": "✅ Analysis complete. Writing report...",
-                "progress": 55,
-            })
-            await asyncio.sleep(0.2)
-
-            yield send("phase", {
-                "phase": "writing", "status": "running",
-                "message": "✍️ LangChain: Writing report...",
-                "progress": 65,
-            })
-
-            yield send("content_start", {"message": "LangChain composing the report..."})
-
-            # Run via router
-            from router import run as run_research
-            report = await asyncio.to_thread(run_research, topic, mode="langchain")
-
-            yield send("phase", {
-                "phase": "writing", "status": "complete",
-                "message": "✅ Report written! Streaming content...",
-                "progress": 80,
-            })
-
-            # Save report to ChromaDB first (so RAGAS has context to evaluate)
-            from memory.chroma_store import save_report as chroma_save
-            try:
-                chroma_save(topic, report)
-            except Exception as e:
-                print(f"  ⚠️  ChromaDB save skipped: {e}")
-
-            # Run RAGAS evaluation on LangChain mode (uses ChromaDB context)
-            try:
-                from ragas_eval import evaluate_rag
-                from memory.chroma_store import get_relevant_context
-                rag_context = get_relevant_context(topic, n_results=5)
-                contexts = [c.strip() for c in rag_context.split("\n\n---\n\n") if c.strip()] if rag_context else []
-                ragas_scores = await asyncio.to_thread(
-                    evaluate_rag, topic, report, contexts, topic
-                )
-            except Exception:
-                ragas_scores = None
-
-            # Save files
-            from main import save_report
-            md_path, pdf_path = await asyncio.to_thread(save_report, topic, report)
-
-            md_content = ""
-            if md_path and os.path.exists(md_path):
-                with open(md_path, encoding="utf-8") as f:
-                    md_content = f.read()
-
-            chunks = _chunk_report(md_content)
-            for i, chunk in enumerate(chunks):
-                yield send("chunk", {
-                    "text": chunk, "index": i, "total": len(chunks),
-                    "progress": 80 + int((i + 1) / len(chunks) * 15),
-                })
-                await asyncio.sleep(0.15)
-
-            yield send("complete", {
-                "message": "✅ Research Complete!", "topic": topic,
-                "markdown": md_path, "pdf": pdf_path,
-                "markdown_basename": str(Path(md_path).name) if md_path else None,
-                "pdf_basename": str(Path(pdf_path).name) if pdf_path else None,
-                "has_pdf": pdf_path is not None and os.path.exists(pdf_path),
-                "full_content": md_content, "progress": 100,
-                "mode": "langchain",
-                "iterations": 0,
-                "ragas_scores": ragas_scores,
-            })
-            return
-
-        # === CREWAI MODE (existing logic) ===
+        # ── Step 0: Plan ──────────────────────────────────────────────────
+        mode_labels = {"crewai": "CrewAI", "langchain": "LangChain", "langgraph": "LangGraph"}
+        mode_label = mode_labels.get(mode, mode.capitalize())
         yield send("phase", {
-            "phase": "research",
-            "status": "running",
-            "message": "🔍 Senior Research Analyst: Searching the web...",
+            "phase": "planning", "status": "running",
+            "message": f"📋 {mode_label}: Planning research strategy...",
+            "progress": 5,
+        })
+
+        from chain.chain import run_planner
+        plan = await asyncio.to_thread(run_planner, topic)
+        sub_questions = plan.get("sub_questions", []) if plan else []
+        num_q = len(sub_questions)
+        yield send("phase", {
+            "phase": "planning", "status": "complete",
+            "message": f"✅ Research plan ready ({num_q} sub-questions). Starting parallel research...",
             "progress": 10,
         })
 
-        from agents import make_agents
-        from tasks import make_tasks
-
-        researcher, analyst, writer = make_agents()
-        tasks = make_tasks(topic, researcher, analyst, writer)
-
-        from crewai import Crew, Process
-        from llm_config import setup_crewai_env
-        setup_crewai_env()
-
-        crew = Crew(
-            agents=[researcher, analyst, writer],
-            tasks=tasks,
-            process=Process.sequential,
-            verbose=False,
-        )
-
+        # ── Step 1: Parallel Research (throttled async queue) ──────────────
         yield send("phase", {
-            "phase": "research",
-            "status": "complete",
-            "message": "✅ Sources gathered. Passing to Analyst...",
-            "progress": 30,
+            "phase": "research", "status": "running",
+            "message": f"🔍 {mode_label}: Researching {num_q} sub-questions in parallel...",
+            "progress": 15,
         })
-        await asyncio.sleep(0.2)
 
-        # === PIPELINE: Analyst ===
+        from research_queue import run_parallel_research
+        from memory.chroma_store import get_relevant_context
+        memory_context = await asyncio.to_thread(get_relevant_context, topic) or ""
+
+        # Run parallel research with real-time progress via async Queue
+        merged_research = ""
+        if num_q > 0:
+            progress_queue: asyncio.Queue = asyncio.Queue()
+            total_q = num_q
+
+            # Launch research in a background task
+            research_task = asyncio.create_task(
+                run_parallel_research(
+                    topic, sub_questions,
+                    memory_context=memory_context,
+                    max_concurrent=2,
+                    progress_queue=progress_queue,
+                )
+            )
+
+            # Read progress events from the queue in real-time
+            done_count = 0
+            while done_count < total_q:
+                try:
+                    idx, total, st = await asyncio.wait_for(
+                        progress_queue.get(), timeout=30.0
+                    )
+                    labels = {"searching": "Searching", "synthesizing": "Analyzing", "complete": "Done"}
+                    pct = 15 + int((idx + 1) / total * 20)
+                    yield send("phase", {
+                        "phase": "research", "status": "running",
+                        "message": f"📡 {labels.get(st, st)} sub-question {idx+1}/{total}...",
+                        "progress": pct,
+                    })
+                    if st == "complete":
+                        done_count += 1
+                except asyncio.TimeoutError:
+                    # Check if research task failed
+                    if research_task.done() and research_task.exception():
+                        raise research_task.exception()
+                    continue
+
+            merged_research = await research_task
+        else:
+            merged_research = f"Research on: {topic}"
+
         yield send("phase", {
-            "phase": "analysis",
-            "status": "running",
-            "message": "🧠 Data Analyst: Identifying patterns & themes...",
+            "phase": "research", "status": "complete",
+            "message": f"✅ Parallel research complete ({num_q} sub-questions). Beginning analysis...",
+            "progress": 35,
+        })
+        await asyncio.sleep(0.1)
+
+        # ── Step 2: Analysis + Writing ────────────────────────────────────
+        yield send("phase", {
+            "phase": "analysis", "status": "running",
+            "message": f"🧠 {mode_label}: Analyzing findings...",
             "progress": 45,
         })
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.1)
 
         yield send("phase", {
-            "phase": "analysis",
-            "status": "complete",
-            "message": "✅ Analysis complete. Passing to Writer...",
+            "phase": "analysis", "status": "complete",
+            "message": f"✅ Analysis complete. Writing report...",
             "progress": 55,
         })
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.1)
 
-        # === PIPELINE: Writer (runs actual crew) ===
         yield send("phase", {
-            "phase": "writing",
-            "status": "running",
-            "message": "✍️ Technical Writer: Generating 8-section report...",
+            "phase": "writing", "status": "running",
+            "message": f"✍️ {mode_label}: Writing report...",
             "progress": 65,
         })
 
-        # Notify frontend to prepare for content streaming
-        yield send("content_start", {"message": "Writer is composing the report..."})
+        yield send("content_start", {"message": f"{mode_label} composing the report..."})
 
-        # Kickoff the crew — this is the blocking call (with retry)
-        from retry_utils import safe_invoke
-
-        result = await asyncio.to_thread(
-            safe_invoke, crew.kickoff, error_message="CrewAI pipeline failed"
+        # Run analysis + writing + verification via router (synchronous, in thread)
+        from router import run_analysis
+        report, critique_iterations, verification_result = await asyncio.to_thread(
+            run_analysis, topic, merged_research, mode=mode
         )
 
-        # Check for retry failure
-        if isinstance(result, dict) and not result.get("success", True):
-            yield send("error", {"message": result.get("error", "Pipeline failed")})
+        if report.startswith("❌"):
+            yield send("error", {"message": report})
             return
 
-        report = result.raw if hasattr(result, "raw") else str(result)
+        # ── Step 3: Verification ────────────────────────────────────────────
+        verify_passed = verification_result.get("passed", True) if verification_result else True
+        verify_findings = verification_result.get("findings", []) if verification_result else []
+        verify_summary = verification_result.get("summary", "") if verification_result else ""
 
-        # Run self-correcting critic loop on the report
-        from critic import run_critic_loop
-        report, critiques = await asyncio.to_thread(run_critic_loop, topic, report)
-        critique_iterations = len(critiques)
+        yield send("phase", {
+            "phase": "verifying", "status": "running",
+            "message": f"✅ Verifying: fact-checking report against research...",
+            "progress": 76,
+        })
+        await asyncio.sleep(0.1)
 
-        # Save report to ChromaDB first (so RAGAS has context to evaluate)
+        yield send("phase", {
+            "phase": "verifying", "status": "complete",
+            "message": f"{'✅' if verify_passed else '⚠️'} Verification: checked {verification_result.get('total_claims_checked', 0) if verification_result else 0} claims, {len(verify_findings)} issues found",
+            "progress": 80,
+            "verification": {
+                "passed": verify_passed,
+                "findings": verify_findings,
+                "summary": verify_summary,
+                "total_claims_checked": verification_result.get("total_claims_checked", 0) if verification_result else 0,
+            },
+        })
+        await asyncio.sleep(0.1)
+
+        # ── Step 4: Save + Evaluate + Stream ────────────────────────────────
+        yield send("phase", {
+            "phase": "writing", "status": "complete",
+            "message": "✅ Report written! Streaming content...",
+            "progress": 80,
+        })
+
+        # Save to ChromaDB
         from memory.chroma_store import save_report as chroma_save
         try:
-            chroma_save(topic, report)
+            await asyncio.to_thread(chroma_save, topic, report)
         except Exception as e:
             print(f"  ⚠️  ChromaDB save skipped: {e}")
+
+        # Run RAGAS evaluation
+        ragas_scores = None
+        try:
+            from ragas_eval import evaluate_rag
+            rag_context = await asyncio.to_thread(get_relevant_context, topic, n_results=5)
+            contexts = [c.strip() for c in rag_context.split("\n\n---\n\n") if c.strip()] if rag_context else []
+            if contexts:
+                ragas_scores = await asyncio.to_thread(evaluate_rag, topic, report, contexts, topic)
+        except Exception:
+            pass
 
         # Save files
         from main import save_report
         md_path, pdf_path = await asyncio.to_thread(save_report, topic, report)
 
-        # Run RAGAS evaluation using the saved context
-        try:
-            from ragas_eval import evaluate_rag
-            from memory.chroma_store import get_relevant_context
-            rag_context = get_relevant_context(topic, n_results=5)
-            contexts = [c.strip() for c in rag_context.split("\n\n---\n\n") if c.strip()] if rag_context else []
-            ragas_scores = evaluate_rag(topic, report, contexts, topic)
-        except Exception:
-            ragas_scores = None
-
-        # Mark writer complete
-        yield send("phase", {
-            "phase": "writing",
-            "status": "complete",
-            "message": "✅ Report written! Streaming content...",
-            "progress": 80,
-        })
-
-        # Read full content for streaming
         md_content = ""
         if md_path and os.path.exists(md_path):
             with open(md_path, encoding="utf-8") as f:
                 md_content = f.read()
 
-        # Stream report in chunks (section by section)
+        # Stream report in chunks
         chunks = _chunk_report(md_content)
         for i, chunk in enumerate(chunks):
             yield send("chunk", {
-                "text": chunk,
-                "index": i,
-                "total": len(chunks),
+                "text": chunk, "index": i, "total": len(chunks),
                 "progress": 80 + int((i + 1) / len(chunks) * 15),
             })
-            await asyncio.sleep(0.15)  # slight delay for streaming effect
+            await asyncio.sleep(0.15)
 
-        # Final completion event (consistent: both modes include iterations + ragas_scores)
+        # Final completion
         yield send("complete", {
             "message": "✅ Research Complete!",
             "topic": topic,
-            "markdown": md_path,
-            "pdf": pdf_path,
+            "markdown": md_path, "pdf": pdf_path,
             "markdown_basename": str(Path(md_path).name) if md_path else None,
             "pdf_basename": str(Path(pdf_path).name) if pdf_path else None,
             "has_pdf": pdf_path is not None and os.path.exists(pdf_path),
             "full_content": md_content,
             "progress": 100,
-            "mode": "crewai",
+            "mode": mode,
             "iterations": critique_iterations,
             "ragas_scores": ragas_scores,
         })
@@ -345,6 +313,7 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
+        print(f"❌ Server error: {e}\n{tb}")
         yield send("error", {"message": str(e), "detail": tb})
 
 
@@ -356,13 +325,16 @@ async def api_run(request: Request):
     if not topic:
         return {"error": "No topic provided"}
 
+    from orchestrator import get_mode as get_orch_mode
+    mode = body.get("mode") or get_orch_mode().value
+
     return EventSourceResponse(
         run_agent_events(
             topic=topic,
             depth=body.get("depth", "standard"),
             fmt=body.get("format", "markdown+pdf"),
             model=body.get("model"),
-            mode=body.get("mode", "crewai"),
+            mode=mode,
         )
     )
 
@@ -385,8 +357,11 @@ async def list_reports():
         # Find corresponding PDF
         pdf_path = f.replace(".md", ".pdf")
         has_pdf = os.path.exists(pdf_path)
+        # Clean name: strip the trailing timestamp pattern (_YYYYMMDD_HHMMSS)
+        clean_name = re.sub(r"_\d{8}_\d{6}$", "", name)
+        clean_name = clean_name.replace("-", " ").replace("_", " ").strip()
         reports.append({
-            "name": name,
+            "name": clean_name,
             "filename": os.path.basename(f),
             "date": mtime.strftime("%b %d, %Y · %H:%M"),
             "size": f"{size_kb:.1f} KB",

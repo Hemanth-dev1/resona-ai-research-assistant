@@ -9,10 +9,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from crewai import Crew, Process
-
-from agents import make_agents
-from tasks import make_tasks
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
@@ -119,7 +115,7 @@ def save_report(topic: str, content: str, output_dir: str = "output") -> tuple[s
 # ---------------------------------------------------------------------------
 
 def run():
-    """Run the research agent interactively."""
+    """Run the research agent interactively via the unified orchestrator."""
     print("\n🤖 AI Research Agent" + "\n" + "=" * 40)
     topic = input("Enter a research topic: ").strip()
 
@@ -127,32 +123,22 @@ def run():
         print("No topic entered. Exiting.")
         return
 
-    researcher, analyst, writer = make_agents()
-    tasks = make_tasks(topic, researcher, analyst, writer)
+    from orchestrator import run_pipeline, get_mode
+    mode = get_mode().value
 
-    crew = Crew(
-        agents=[researcher, analyst, writer],
-        tasks=tasks,
-        process=Process.sequential,
-        verbose=True,
-    )
+    print(f"\n🚀 Starting research on: '{topic}' | mode={mode}\n")
 
-    print(f"\n🚀 Starting research on: '{topic}'\n")
+    result = run_pipeline(topic, mode=mode)
 
-    # Use retry logic for crew.kickoff()
-    from retry_utils import safe_invoke
-    result = safe_invoke(crew.kickoff, error_message="CrewAI pipeline failed")
-
-    if isinstance(result, dict) and not result.get("success", True):
-        print(f"❌ {result.get('error', 'Pipeline failed')}")
+    if result.get("error"):
+        print(f"❌ {result['error']}")
         return
 
-    report = result.raw if hasattr(result, "raw") else str(result)
-
-    # Run self-correcting critic loop
-    from critic import run_critic_loop
-    report, critiques = run_critic_loop(topic, report)
-    print(f"  📝 Critic iterations: {len(critiques)}")
+    report = result["report"]
+    critique_iterations = result["critique_iterations"]
+    verification = result.get("verification_result", {})
+    verify_passed = verification.get("passed", True) if verification else True
+    verify_findings = verification.get("findings", []) if verification else []
 
     # Save outputs
     print(f"\n{'=' * 60}")
@@ -163,13 +149,15 @@ def run():
     print(f"\n{'=' * 60}")
     print("  ✅ Research Complete!")
     print(f"{'=' * 60}")
-    print(f"  Topic:    {topic}")
-    print(f"  Markdown: {md_path}")
+    print(f"  Topic:        {topic}")
+    print(f"  Mode:         {mode}")
+    print(f"  Markdown:     {md_path}")
     if pdf_path:
-        print(f"  PDF:      {pdf_path}")
-    if critiques:
-        last = critiques[-1]
-        print(f"  Score:    {last.overall_score}/10 ({len(critiques)} iteration(s))")
+        print(f"  PDF:          {pdf_path}")
+    print(f"  Critic iters: {critique_iterations}")
+    print(f"  Verification: {'✅ Passed' if verify_passed else '⚠️ ' + str(len(verify_findings)) + ' issues found'}")
+    if result.get("duration_seconds"):
+        print(f"  Duration:     {result['duration_seconds']:.1f}s")
     print()
 
     # Show a preview

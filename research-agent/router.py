@@ -1,14 +1,15 @@
 """Router that selects the appropriate research pipeline based on mode.
 
 Dispatches between:
-- "crewai": The existing CrewAI multi-agent pipeline (default)
-- "langchain": The new LangChain LCEL chain with RAG memory via ChromaDB
+- "langgraph": LangGraph StateGraph with conditional critic edges (recommended)
+- "crewai": CrewAI-based analysis + writing (research done externally via parallel queue)
+- "langchain": LangChain LCEL chains for analysis + writing
 
-Both modes benefit from:
-- Retry logic via tenacity (exponential backoff)
-- Self-correcting critic loop (score + feedback loop)
-- LangSmith tracing via @traceable
-- Pydantic-validated PipelineResult output
+All modes:
+- Use the parallel research queue for web research (in server.py)
+- Use self-correcting critic loop
+- Use retry logic via tenacity
+- Use LangSmith tracing via @traceable
 """
 
 import os
@@ -18,87 +19,217 @@ from typing import Optional
 
 from langsmith import traceable
 
-from chain.chain import run_langchain
+from chain.chain import run_analysis_writing
 from memory.chroma_store import get_relevant_context, save_report
 from retry_utils import safe_invoke
 from schemas.parser import parse_report
 
 
 @traceable(name="resona_pipeline", run_type="chain")
-def run(topic: str, mode: str = "crewai") -> str:
-    """Run the research pipeline in the specified mode.
+def run_analysis(topic: str, merged_research: str, mode: str = "crewai") -> tuple:
+    """Run analysis + writing on pre-computed research (parallel research done externally).
+
+    Supports 'langgraph' mode which uses the LangGraph StateGraph with conditional
+    critic edges (planner → analysis_writer → critic ↔ revise → verifier → END).
 
     Args:
-        topic: The research topic to investigate.
-        mode: Either "crewai" (default) or "langchain".
+        topic: The research topic.
+        merged_research: Merged research from all sub-question workers.
+        mode: "langgraph" (recommended), "crewai", or "langchain".
 
     Returns:
-        The generated report content as a string.
+        Tuple of (report_text, critique_iterations_count, verification_result_dict).
+        If error, returns ("❌ error message", 0, {}).
 
     Raises:
-        ValueError: If mode is not "crewai" or "langchain".
+        ValueError: If mode is not "langgraph", "crewai", or "langchain".
     """
     start_time = time.time()
 
-    if mode == "langchain":
-        # Retrieve relevant context from past research
-        memory_context = get_relevant_context(topic)
-        if memory_context:
-            print(f"  🧠 RAG context loaded from ChromaDB memory")
-
-        # Run the LangChain pipeline (with retry on chain.invoke)
-        result = safe_invoke(
-            run_langchain, topic, memory_context=memory_context,
-            error_message="LangChain pipeline failed",
+    if mode == "langgraph":
+        # === LANGGRAPH MODE ===
+        from graph import run_pipeline_graph
+        result = run_pipeline_graph(
+            topic=topic,
+            merged_research=merged_research,
+            memory_context=os.getenv("MEMORY_CONTEXT", ""),
+            mode="langchain",  # Use LangChain chains inside the graph
+            max_critic_iterations=int(os.getenv("RESONA_MAX_CRITIC_ITERATIONS", "3")),
         )
+        if result.get("error"):
+            return (f"❌ Graph pipeline error: {result['error']}", 0, {})
+        report = result.get("report", "")
+        critique_iterations = result.get("critique_iterations", 0)
 
+    elif mode == "langchain":
+        # === LANGCHAIN MODE ===
+        result = safe_invoke(
+            run_analysis_writing, topic, merged_research=merged_research,
+            error_message="LangChain analysis+writing failed",
+        )
         if isinstance(result, dict) and not result.get("success", True):
-            error_msg = result.get("error", "LangChain pipeline failed")
-            return f"❌ Pipeline error: {error_msg}"
-
+            return (f"❌ Pipeline error: {result.get('error', 'Analysis+writing failed')}", 0, {})
         report = result.get("report", "")
 
         # Run self-correcting critic loop
         from critic import run_critic_loop
-
         report, critiques = run_critic_loop(topic, report)
-        print(f"  📝 Critic loop: {len(critiques)} iteration(s)")
-
-        # Validate report structure with Pydantic model
-        parsed = parse_report(report, topic)
-        if parsed is None:
-            print("  ⚠️  Report failed Pydantic validation — structure may be malformed")
-        else:
-            print(f"  ✅ Report validated: {len(parsed.sources)} sources, {len(parsed.key_insights)} insights")
-
-        # Save to ChromaDB for future retrieval (non-blocking — fail gracefully)
-        try:
-            save_report(topic, report)
-        except Exception as e:
-            print(f"  ⚠️  ChromaDB save skipped: {e}")
-
-        duration = time.time() - start_time
-        print(f"  ⏱️  Pipeline completed in {duration:.1f}s")
-        return report
+        critique_iterations = len(critiques)
 
     elif mode == "crewai":
-        # Import and run the existing CrewAI pipeline
+        # === CREWAI MODE ===
         try:
             from agents import make_agents
-            from tasks import make_tasks
         except ImportError:
-            print("❌ Could not import CrewAI modules. Make sure agents.py and tasks.py exist.")
+            print("❌ Could not import CrewAI modules.")
             sys.exit(1)
 
         from crewai import Crew, Process
-
-        # Set up LLM from unified config
+        from crewai import Task as CrewAITask
         from llm_config import setup_crewai_env
 
         setup_crewai_env()
 
-        researcher, analyst, writer = make_agents()
-        tasks = make_tasks(topic, researcher, analyst, writer)
+        _, _, analyst, writer = make_agents()
+
+        # Simplified 2-task crew: analysis + writing (research done externally)
+        analysis_task = CrewAITask(
+            description=(
+                f"Analyze the merged research findings on '{topic}' and identify key insights.\n\n"
+                "Instructions:\n"
+                "1. Review the research findings below thoroughly.\n"
+                "2. Identify 3-5 major themes or patterns.\n"
+                "3. Highlight the most significant statistics and data points.\n"
+                "4. Note any gaps or areas needing further investigation.\n"
+                "5. Prepare an organized analysis that the writer can use directly.\n\n"
+                "Research findings:\n"
+                f"{merged_research[:8000]}"
+            ),
+            expected_output=(
+                "A structured analysis with 3-5 key themes, supporting data points, "
+                "and clear takeaways. Minimum 300 words."
+            ),
+            agent=analyst,
+        )
+
+        writing_task = CrewAITask(
+            description=(
+                f"Write a comprehensive, professional report on '{topic}'.\n\n"
+                "The report MUST include these sections in order:\n\n"
+                "1. **Title Page** — Topic, date, 'Generated by AI Research Agent'\n"
+                "2. **Executive Summary** — 2-3 paragraph overview\n"
+                "3. **Introduction** — Context and background\n"
+                "4. **Detailed Analysis** — 3-5 subsections with findings\n"
+                "5. **Key Insights** — Bullet-pointed takeaways\n"
+                "6. **Challenges & Considerations** — Limitations and controversies\n"
+                "7. **Future Outlook** — Trends and predictions\n"
+                "8. **Sources & References** — Numbered list of all sources\n\n"
+                "Format with Markdown (## headings, bullet points, **bold** for emphasis). "
+                "Write in a professional, authoritative tone. Target 1500-2000 words."
+            ),
+            expected_output=(
+                "A complete Markdown report with all 8 sections, well-formatted, "
+                "factually accurate, and professionally written. Minimum 1500 words."
+            ),
+            agent=writer,
+            context=[analysis_task],
+        )
+
+        crew = Crew(
+            agents=[analyst, writer],
+            tasks=[analysis_task, writing_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+
+        print(f"\n🚀 CrewAI: Analyzing + writing report on: '{topic}'\n")
+        result = safe_invoke(crew.kickoff, error_message="CrewAI analysis+writing failed")
+        if isinstance(result, dict) and not result.get("success", True):
+            return (f"❌ CrewAI error: {result.get('error', 'Analysis+writing failed')}", 0, {})
+        report = result.raw if hasattr(result, "raw") else str(result)
+
+        # Run self-correcting critic loop
+        from critic import run_critic_loop
+        report, critiques = run_critic_loop(topic, report)
+        critique_iterations = len(critiques)
+
+    else:
+        raise ValueError(f"Unknown mode: '{mode}'. Use 'langgraph', 'crewai', or 'langchain'.")
+
+    # Run verification for langchain and crewai modes (graph mode does it internally)
+    if mode != "langgraph":
+        try:
+            from chain.chain import run_verification
+            verification_result = run_verification(topic, report, merged_research)
+        except Exception as e:
+            print(f"  ⚠️  Verification skipped: {e}")
+            verification_result = {
+                "findings": [], "total_claims_checked": 0,
+                "passed": True, "summary": f"Verification skipped: {e}",
+            }
+    else:
+        verification_result = {
+            "findings": result.get("verification_findings", []),
+            "total_claims_checked": result.get("total_claims_checked", len(result.get("verification_findings", []))),
+            "passed": result.get("verification_passed", True),
+            "summary": result.get("verification_summary", ""),
+        }
+
+    # Validate report structure with Pydantic model
+    parsed = parse_report(report, topic)
+    if parsed is None:
+        print("  ⚠️  Report failed Pydantic validation — structure may be malformed")
+    else:
+        print(f"  ✅ Report validated: {len(parsed.sources)} sources, {len(parsed.key_insights)} insights")
+
+    # Save to ChromaDB for future retrieval
+    try:
+        save_report(topic, report)
+    except Exception as e:
+        print(f"  ⚠️  ChromaDB save skipped: {e}")
+
+    duration = time.time() - start_time
+    print(f"  ⏱️  Analysis+writing completed in {duration:.1f}s")
+    return (report, critique_iterations, verification_result)
+
+
+# ── Legacy entry point (kept for backward compat) ──────────────────────────
+
+@traceable(name="resona_pipeline_legacy", run_type="chain")
+def run(topic: str, mode: str = "crewai") -> str:
+    """Legacy: run the full pipeline including research (sequential).
+
+    For new code, use run_analysis() after parallel research.
+    """
+    from chain.chain import run_langchain
+
+    if mode == "langchain":
+        memory_context = get_relevant_context(topic)
+        if memory_context:
+            print(f"  🧠 RAG context loaded from ChromaDB memory")
+
+        result = safe_invoke(
+            run_langchain, topic, memory_context=memory_context,
+            error_message="LangChain pipeline failed",
+        )
+        if isinstance(result, dict) and not result.get("success", True):
+            return f"❌ Pipeline error: {result.get('error', 'LangChain pipeline failed')}"
+        report = result.get("report", "")
+
+    elif mode == "crewai":
+        try:
+            from agents import make_agents
+            from tasks import make_tasks
+        except ImportError:
+            print("❌ Could not import CrewAI modules.")
+            sys.exit(1)
+
+        from crewai import Crew, Process
+        from llm_config import setup_crewai_env
+        setup_crewai_env()
+
+        planner, researcher, analyst, writer = make_agents()
+        tasks = make_tasks(topic, planner, researcher, analyst, writer)
 
         crew = Crew(
             agents=[researcher, analyst, writer],
@@ -107,38 +238,29 @@ def run(topic: str, mode: str = "crewai") -> str:
             verbose=True,
         )
 
-        print(f"\n🚀 Starting research on: '{topic}'\n")
-
-        # Run with retry logic
+        print(f"\n🚀 Starting sequential research on: '{topic}'\n")
         result = safe_invoke(crew.kickoff, error_message="CrewAI pipeline failed")
         if isinstance(result, dict) and not result.get("success", True):
-            error_msg = result.get("error", "CrewAI pipeline failed")
-            return f"❌ Pipeline error: {error_msg}"
-
+            return f"❌ CrewAI error: {result.get('error', 'Pipeline failed')}"
         report = result.raw if hasattr(result, "raw") else str(result)
-
-        # Validate report structure with Pydantic model
-        parsed = parse_report(report, topic)
-        if parsed is None:
-            print("  ⚠️  Report failed Pydantic validation — structure may be malformed")
-        else:
-            print(f"  ✅ Report validated: {len(parsed.sources)} sources, {len(parsed.key_insights)} insights")
-
-        # Run self-correcting critic loop
-        from critic import run_critic_loop
-
-        report, critiques = run_critic_loop(topic, report)
-        print(f"  📝 Critic loop: {len(critiques)} iteration(s)")
-
-        # Save to ChromaDB for future retrieval (non-blocking — fail gracefully)
-        try:
-            save_report(topic, report)
-        except Exception as e:
-            print(f"  ⚠️  ChromaDB save skipped: {e}")
-
-        duration = time.time() - start_time
-        print(f"  ⏱️  Pipeline completed in {duration:.1f}s")
-        return report
 
     else:
         raise ValueError(f"Unknown mode: '{mode}'. Use 'crewai' or 'langchain'.")
+
+    # Critic + save
+    parsed = parse_report(report, topic)
+    if parsed is None:
+        print("  ⚠️  Report failed Pydantic validation")
+    else:
+        print(f"  ✅ Report validated: {len(parsed.sources)} sources, {len(parsed.key_insights)} insights")
+
+    from critic import run_critic_loop
+    report, critiques = run_critic_loop(topic, report)
+    print(f"  📝 Critic loop: {len(critiques)} iteration(s)")
+
+    try:
+        save_report(topic, report)
+    except Exception as e:
+        print(f"  ⚠️  ChromaDB save skipped: {e}")
+
+    return report

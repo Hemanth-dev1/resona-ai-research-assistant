@@ -1,31 +1,62 @@
-"""Task definitions for the research agent pipeline."""
+"""Task definitions for the research agent pipeline.
+
+Note: In the new parallel research flow, research is done externally via
+research_queue.py. These tasks are only used for the legacy sequential flow
+(router.run() -> run()).
+"""
+
+import json
 
 from crewai import Task
 
 
-def make_tasks(topic: str, researcher, analyst, writer):
-    """Create the three sequential tasks for the research pipeline.
+def make_tasks(topic: str, planner, researcher, analyst, writer):
+    """Create the sequential tasks for the research pipeline (legacy).
+
+    For the new parallel flow, use router.run_analysis() instead.
 
     Args:
         topic: The research topic.
+        planner: The Research Planner agent.
         researcher: The Senior Research Analyst agent.
         analyst: The Data Analyst agent.
         writer: The Technical Content Writer agent.
 
     Returns:
-        list[Task]: The three tasks in order.
+        list[Task]: The four tasks in order.
     """
+
+    planner_task = Task(
+        description=(
+            f"Create a research plan for the topic: '{topic}'.\n\n"
+            "Instructions:\n"
+            "1. Decompose the topic into 3-5 focused, actionable sub-questions.\n"
+            "2. Each sub-question should target a distinct angle (e.g., market size, key players, "
+            "technology, regulation, trends).\n"
+            "3. Provide a rationale for why each sub-question matters.\n"
+            "4. Suggest an overall research approach.\n\n"
+            "Return as valid JSON: {{\"topic\": \"...\", \"sub_questions\": [{{\"question\": \"...\", "
+            "\"rationale\": \"...\", \"priority\": 1}}, ...], \"suggested_approach\": \"...\"}}"
+        ),
+        expected_output=(
+            "A JSON research plan with topic, 3-5 sub-questions (each with question, rationale, priority), "
+            "and a suggested approach."
+        ),
+        agent=planner,
+    )
 
     research_task = Task(
         description=(
             f"Research the topic: '{topic}'.\n\n"
             "Instructions:\n"
-            "1. Search the web for the most recent and authoritative information.\n"
-            "2. Gather from at least 5-8 credible sources.\n"
-            "3. Extract key facts, statistics, dates, and context.\n"
-            "4. Note any conflicting viewpoints or controversies.\n"
-            "5. Identify current trends and future outlook.\n"
-            "6. Organize findings into a structured research brief with source URLs.\n\n"
+            "1. Review the research plan and sub-questions provided by the Planner.\n"
+            "2. Search the web for the most recent and authoritative information, "
+            "focusing on answering each sub-question.\n"
+            "3. Gather from at least 5-8 credible sources.\n"
+            "4. Extract key facts, statistics, dates, and context.\n"
+            "5. Note any conflicting viewpoints or controversies.\n"
+            "6. Identify current trends and future outlook.\n"
+            "7. Organize findings into a structured research brief with source URLs.\n\n"
             "Be thorough — your findings will be used to write the final report."
         ),
         expected_output=(
@@ -33,6 +64,7 @@ def make_tasks(topic: str, researcher, analyst, writer):
             "with key stats, expert opinions, and source URLs. Minimum 500 words."
         ),
         agent=researcher,
+        context=[planner_task],
     )
 
     analysis_task = Task(
@@ -77,4 +109,4 @@ def make_tasks(topic: str, researcher, analyst, writer):
         context=[research_task, analysis_task],
     )
 
-    return [research_task, analysis_task, writing_task]
+    return [planner_task, research_task, analysis_task, writing_task]

@@ -2,6 +2,11 @@
 
 Uses Groq via OPENAI_API_BASE env var (set in main.py).
 Search via SerperDevTool (falls back to DuckDuckGo if no SERPER_API_KEY).
+
+Model routing:
+- Researcher: fast/cheap model (LLM_MODEL_FAST, default: llama-3.1-8b-instant)
+- Analyst: capable model (LLM_MODEL_CAPABLE, default: llama-3.3-70b-versatile)
+- Writer: capable model (LLM_MODEL_CAPABLE, default: llama-3.3-70b-versatile)
 """
 
 import os
@@ -33,22 +38,43 @@ def get_search_tools() -> list:
 
 
 def make_agents():
-    """Create the three research agents.
+    """Create the research agents with model routing.
+
+    Planner and Researcher use the fast/cheap model.
+    Analyst and Writer use the capable model for deep reasoning.
 
     Returns:
-        tuple[Agent, Agent, Agent]: (researcher, analyst, writer)
+        tuple[Agent, Agent, Agent, Agent]: (planner, researcher, analyst, writer)
     """
     tools = get_search_tools()
 
+    from llm_config import get_fast_llm, get_capable_llm
+    fast_llm = get_fast_llm(temperature=0.3)
+    capable_llm = get_capable_llm(temperature=0.3)
+
+    planner = Agent(
+        role="Research Planner",
+        goal="Decompose broad research topics into focused, actionable sub-questions.",
+        backstory=(
+            "You are a strategic research planner who excels at breaking down complex topics "
+            "into well-structured, focused questions. You ensure every angle of the topic "
+            "is covered before research begins."
+        ),
+        llm=fast_llm,
+        allow_delegation=False,
+        verbose=True,
+    )
+
     researcher = Agent(
         role="Senior Research Analyst",
-        goal="Gather accurate, up-to-date information on the given topic from reliable web sources.",
+        goal="Gather accurate, up-to-date information on the given topic from reliable web sources, guided by the research plan.",
         backstory=(
             "You are a meticulous researcher with expertise in investigative journalism. "
             "You find authoritative sources, cross-reference facts, and extract key insights. "
             "You always check for the most recent information and note conflicting viewpoints."
         ),
         tools=tools,
+        llm=fast_llm,
         allow_delegation=False,
         verbose=True,
     )
@@ -61,6 +87,7 @@ def make_agents():
             "meaningful insights from raw information. You organize findings logically and "
             "highlight the most important conclusions for the reader."
         ),
+        llm=capable_llm,
         allow_delegation=False,
         verbose=True,
     )
@@ -73,8 +100,9 @@ def make_agents():
             "You produce clean, publication-ready reports with executive summaries, "
             "detailed analysis, and proper citations."
         ),
+        llm=capable_llm,
         allow_delegation=False,
         verbose=True,
     )
 
-    return researcher, analyst, writer
+    return planner, researcher, analyst, writer

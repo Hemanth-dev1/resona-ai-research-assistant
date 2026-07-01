@@ -24,3 +24,5 @@ services:
         value: "7"
       - key: RESONA_MAX_CRITIC_ITERATIONS
         value: "3"
+      - key: ORCHESTRATION
+        value: langgraph
