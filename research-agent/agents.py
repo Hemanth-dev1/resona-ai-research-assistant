@@ -11,7 +11,7 @@ Model routing:
 
 import os
 
-from crewai import Agent
+from crewai import Agent, LLM
 
 
 def get_search_tools() -> list:
@@ -53,9 +53,10 @@ def make_agents():
     fast_model = get_fast_model_name()
     capable_model = get_capable_model_name()
 
-    # CrewAI expects model names as strings in "provider/model_name" format
-    fast_llm_str = f"{provider}/{fast_model}"
-    capable_llm_str = f"{provider}/{capable_model}"
+    # Use crewai.LLM class with caching disabled
+    # (LiteLLM 1.90+ sends cache_breakpoint which Groq doesn't support)
+    fast_llm = LLM(model=f"{provider}/{fast_model}", disable_cache=True, temperature=0.3)
+    capable_llm = LLM(model=f"{provider}/{capable_model}", disable_cache=True, temperature=0.3)
 
     planner = Agent(
         role="Research Planner",
@@ -65,7 +66,7 @@ def make_agents():
             "into well-structured, focused questions. You ensure every angle of the topic "
             "is covered before research begins."
         ),
-        llm=fast_llm_str,
+        llm=fast_llm,
         allow_delegation=False,
         verbose=True,
     )
@@ -79,7 +80,7 @@ def make_agents():
             "You always check for the most recent information and note conflicting viewpoints."
         ),
         tools=tools,
-        llm=fast_llm_str,
+        llm=fast_llm,
         allow_delegation=False,
         verbose=True,
     )
@@ -92,7 +93,7 @@ def make_agents():
             "meaningful insights from raw information. You organize findings logically and "
             "highlight the most important conclusions for the reader."
         ),
-        llm=capable_llm_str,
+        llm=capable_llm,
         allow_delegation=False,
         verbose=True,
     )
@@ -105,7 +106,7 @@ def make_agents():
             "You produce clean, publication-ready reports with executive summaries, "
             "detailed analysis, and proper citations."
         ),
-        llm=capable_llm_str,
+        llm=capable_llm,
         allow_delegation=False,
         verbose=True,
     )
