@@ -82,9 +82,9 @@ ANALYST_PROMPT = ChatPromptTemplate.from_messages([
         "  explain concisely what's missing and what further search would be needed. "
         "  If true, set to null.\n\n"
         "Example output:\n"
-        "{\"findings\": \"The global AI market reached $142.3B in 2024 [S1]. "
+        "{{\"findings\": \"The global AI market reached $142.3B in 2024 [S1]. "
         "Key players include OpenAI ($X valuation) [S2] and Google DeepMind [S2][S3].\", "
-        "\"has_sufficient_evidence\": true, \"gap_reason\": null}"
+        "\"has_sufficient_evidence\": true, \"gap_reason\": null}}"
     ),
     (
         "human",
