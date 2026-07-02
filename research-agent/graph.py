@@ -42,6 +42,11 @@ class ResearchState(TypedDict):
     verification_iterations: int              # how many times verifier has run
     max_verification_iterations: int          # max verifier cycles (default 1)
     strict_verification: bool                  # if True, failed verification routes back to revise
+    claim_verification_passed: Optional[bool] # claim verifier result (Step 5)
+    claim_verification_summary: Optional[str]  # claim verifier summary
+    unsupported_claims: list                  # list of unsupported claim dicts
+    claim_verifier_iterations: int            # how many times claim verifier has run
+    max_claim_verifier_iterations: int        # max claim verifier cycles (default 2)
     error: Optional[str]
 
 
@@ -65,9 +70,41 @@ def analysis_writer_node(state: ResearchState) -> dict:
 
     Uses the capable model via LangChain chain.
     (Only 'langchain' mode is supported inside the graph.)
+
+    If this is a retry from claim_verifier with unsupported claims, the
+    feedback is injected into the merged_research so the analyst/writer
+    knows what specific claims to fix.
     """
     topic = state["topic"]
     merged = state["merged_research"]
+
+    # ── Inject claim verifier feedback if this is a retry ───────────────
+    unsupported = state.get("unsupported_claims", [])
+    if unsupported:
+        feedback = (
+            "\n\n---\n"
+            "## Claim Verification Feedback\n"
+            "The following claims were NOT supported by their cited sources. "
+            "REWRITE or REMOVE them. Either find sources that actually support "
+            "the claim, or remove the claim entirely:\n\n"
+        )
+        for uc in unsupported:
+            sid = uc.get("source_id", "?")
+            claim = uc.get("claim_text", "")[:200]
+            reason = uc.get("reason", "")
+            feedback += (
+                f"- **[{sid}]** Claim: \"{claim}\"\n"
+                f"  Issue: {reason}\n\n"
+            )
+        feedback += (
+            "Remember: every claim must be traceable to its cited source. "
+            "If a source doesn't support the claim attached to it, either "
+            "find a different source or remove the claim.\n"
+            "---\n"
+        )
+        merged += feedback
+        print(f"  🔄 Graph: Injected {len(unsupported)} unsupported claim(s) as feedback")
+
     if not merged:
         # No external research — run planner first, then use LLM-only research
         from chain.chain import run_planner
@@ -88,7 +125,8 @@ def analysis_writer_node(state: ResearchState) -> dict:
     from chain.chain import run_analysis_writing
     result = run_analysis_writing(topic, merged)
     report = result.get("report", "")
-    return {"report": report}
+    # Clear unsupported claims so they don't accumulate on subsequent retries
+    return {"report": report, "unsupported_claims": []}
 
 
 def critic_node(state: ResearchState) -> dict:
@@ -139,6 +177,70 @@ def revise_node(state: ResearchState) -> dict:
         revised, _ = run_critic_loop(topic, report, max_iterations=1)
 
     return {"report": revised}
+
+
+# ── Claim Verifier Node (Step 5) ────────────────────────────────────────────
+
+def claim_verifier_node(state: ResearchState) -> dict:
+    """Verify each cited claim against its source using a fast/cheap model.
+
+    Parses [S#] tags from the report, extracts the surrounding claim text,
+    and sends each claim+source pair to a fast LLM for verification.
+    If ANY claims are unsupported, routes back to analysis_writer with the
+    specific unsupported claim + reason.
+    """
+    topic = state["topic"]
+    report = state["report"]
+    merged_research = state.get("merged_research", "")
+    iteration = state.get("claim_verifier_iterations", 0) + 1
+    max_iter = state.get("max_claim_verifier_iterations", 2)
+
+    print(f"  🔍 Graph: Claim verification (attempt {iteration}/{max_iter})...")
+
+    from chain.chain import run_claim_verification
+    result = run_claim_verification(topic, report, merged_research)
+
+    passed = result.get("passed", True)
+    unsupported = result.get("unsupported_claims", [])
+    summary = result.get("summary", "Claim verification complete.")
+    claims_checked = result.get("claims_checked", 0)
+
+    if not passed:
+        print(f"  ❌ Graph: {len(unsupported)} unsupported claim(s) found")
+        for uc in unsupported:
+            print(f"     - {uc.get('source_id', '?' )}: {uc.get('claim_text', '')[:80]}...")
+            print(f"       Reason: {uc.get('reason', '')[:80]}")
+
+    return {
+        "claim_verification_passed": passed,
+        "claim_verification_summary": summary,
+        "unsupported_claims": unsupported,
+        "claim_verifier_iterations": iteration,
+        "total_claims_checked": claims_checked,
+    }
+
+
+def route_after_claim_verifier(state: ResearchState) -> str:
+    """Decide next step after claim verification.
+
+    If claims are unsupported and we haven't hit max iterations, route back
+    to analysis_writer with specific feedback. Otherwise proceed to critic.
+    """
+    passed = state.get("claim_verification_passed", True)
+    iterations = state.get("claim_verifier_iterations", 0)
+    max_iter = state.get("max_claim_verifier_iterations", 2)
+    unsupported = state.get("unsupported_claims", [])
+
+    if not passed and iterations < max_iter and unsupported:
+        print(f"  🔄 Graph: Routing back to analysis_writer with {len(unsupported)} unsupported claim(s)")
+        return "analysis_writer"
+
+    if not passed:
+        print(f"  ⚠️  Graph: Max claim verifier iterations ({max_iter}) reached — proceeding with {len(unsupported)} unresolved claim(s)")
+    else:
+        print(f"  ✅ Graph: All cited claims verified — proceeding to critic")
+
+    return "critic"
 
 
 # ── Entry Router ───────────────────────────────────────────────────────────
@@ -248,6 +350,7 @@ def build_research_graph() -> StateGraph:
     # Add nodes
     builder.add_node("planner", planner_node)
     builder.add_node("analysis_writer", analysis_writer_node)
+    builder.add_node("claim_verifier", claim_verifier_node)
     builder.add_node("critic", critic_node)
     builder.add_node("revise", revise_node)
     builder.add_node("verifier", verifier_node)
@@ -265,8 +368,18 @@ def build_research_graph() -> StateGraph:
     # planner → analysis_writer (only if planner ran)
     builder.add_edge("planner", "analysis_writer")
 
-    # analysis_writer → critic
-    builder.add_edge("analysis_writer", "critic")
+    # analysis_writer → claim_verifier (Step 5: cheap claim check BEFORE critic)
+    builder.add_edge("analysis_writer", "claim_verifier")
+
+    # Conditional: claim_verifier → analysis_writer (retry) or critic (proceed)
+    builder.add_conditional_edges(
+        "claim_verifier",
+        route_after_claim_verifier,
+        {
+            "analysis_writer": "analysis_writer",
+            "critic": "critic",
+        },
+    )
 
     # Conditional: critic → revise or verifier (via END)
     builder.add_conditional_edges(
@@ -351,6 +464,11 @@ def run_pipeline_graph(
         "max_verification_iterations": 1,
         "total_claims_checked": 0,
         "strict_verification": strict_verification,
+        "claim_verification_passed": None,
+        "claim_verification_summary": None,
+        "unsupported_claims": [],
+        "claim_verifier_iterations": 0,
+        "max_claim_verifier_iterations": 2,
         "error": None,
     }
 

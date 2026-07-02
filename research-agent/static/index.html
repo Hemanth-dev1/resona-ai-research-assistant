@@ -88,6 +88,7 @@
   }
   @media (min-width: 768px) {
     .mobile-sidebar-toggle { display: none !important; }
+    .sidebar-overlay, .sidebar-drawer { display: none !important; }
   }
 
   /* ── Old-style logo ── */
@@ -104,8 +105,8 @@
     background: rgb(var(--primary));
     position: absolute;
   }
-  .logo-dot.tl { top: -3px; right: -3px; }
-  .logo-dot.br { bottom: -3px; left: -3px; }
+  .logo-dot.tl { top: 2px; left: 2px; }
+  .logo-dot.br { bottom: 2px; right: 2px; }
   .logo-text {
     font-size: 20px; font-weight: 800; letter-spacing: -.5px;
   }

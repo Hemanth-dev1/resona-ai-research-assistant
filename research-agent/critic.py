@@ -11,6 +11,13 @@ Flow:
     Score ≥ threshold? → ✅ Accept report
     ↓ (No, < max iterations)
     Critic sends specific feedback → Writer revises → Critic re-scores
+
+Hedge-Phrase Gate:
+    Before the LLM critic, a regex-based pre-check scans for hedging language
+    (e.g. "further research is needed"). If found, the LLM critic is skipped
+    entirely and the section auto-fails with the specific hedge phrase, so the
+    retry prompt can say "you wrote a hedge instead of a finding — search more
+    specifically."
 """
 
 import json
@@ -28,6 +35,29 @@ from schemas.models import CritiqueResult, CritiqueDimension, DimensionScore
 # Configuration from environment
 CRITIC_THRESHOLD = int(os.getenv("QUALITY_THRESHOLD") or os.getenv("RESONA_CRITIC_THRESHOLD", "7"))
 MAX_CRITIC_ITERATIONS = int(os.getenv("RESONA_MAX_CRITIC_ITERATIONS", "3"))
+
+
+# ── Hedge-Phrase Gate ─────────────────────────────────────────────────────
+# Regex patterns that detect hedging / non-committal language in report sections.
+# If ANY match, the LLM critic call is skipped entirely and the section
+# auto-fails so the writer must rewrite with concrete findings.
+
+HEDGE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"further\s+research\s+is\s+needed", re.IGNORECASE),
+    re.compile(r"more\s+research\s+(is\s+)?needed", re.IGNORECASE),
+    re.compile(r"requires?\s+(additional|further)\s+(research|investigation)", re.IGNORECASE),
+    re.compile(r"it\s+is\s+(unclear|not\s+clear)\s+(whether|if)", re.IGNORECASE),
+    re.compile(r"needs\s+further\s+(study|research|investigation|analysis)", re.IGNORECASE),
+    re.compile(r"remains\s+to\s+be\s+(seen|determined|established)", re.IGNORECASE),
+    re.compile(r"may\s+require\s+additional\s+(research|study|analysis)", re.IGNORECASE),
+    re.compile(r"it\s+is\s+important\s+to\s+note\s+that\s+(it\s+is\s+(unclear|not\s+clear)|may|might|could|remains)", re.IGNORECASE),  # hedge only when followed by vague language
+    re.compile(r"has\s+the\s+potential\s+to\s+(be|become|impact)", re.IGNORECASE),  # vague potential
+    re.compile(r"could\s+(potentially|possibly)\s+(lead|result|affect|impact)", re.IGNORECASE),
+    re.compile(r"further\s+(investigation|study|analysis)\s+(is\s+)?(needed|warranted|called\s+for)", re.IGNORECASE),
+    re.compile(r"it\s+remains\s+(unclear|unknown|uncertain)\s+(whether|if|what|how)", re.IGNORECASE),
+    re.compile(r"the\s+(impact|effect|implication)s?\s+(of\s+.+?\s+)(are|is)\s+not\s+(yet\s+)?(fully\s+)?understood", re.IGNORECASE),
+    re.compile(r"more\s+(work|research|data|evidence)\s+(is\s+)?(needed|required|called\s+for)", re.IGNORECASE),
+]
 
 
 # ── Critic Prompt Templates ────────────────────────────────────────────────
@@ -94,6 +124,35 @@ def _format_dimensions_feedback(dimensions: List[DimensionScore]) -> str:
     return "\n".join(lines)
 
 
+def detect_hedge_phrases(text: str) -> list[dict]:
+    """Scan report text for hedge phrases BEFORE calling the LLM critic.
+
+    A hard gate: if any hedge is found, skip the LLM critic entirely and
+    auto-fail with the specific hedge phrase so the writer can be instructed
+    to replace it with a concrete finding.
+
+    Args:
+        text: The full report text to scan.
+
+    Returns:
+        List of dicts with keys "phrase" (the matched text), "pattern" (regex
+        pattern name), and "context" (surrounding text snippet). Empty list
+        means no hedge phrases found — proceed to LLM critic.
+    """
+    findings: list[dict] = []
+    for pattern in HEDGE_PATTERNS:
+        for match in pattern.finditer(text):
+            start = max(0, match.start() - 60)
+            end = min(len(text), match.end() + 60)
+            context = text[start:end].replace("\n", " ").strip()
+            findings.append({
+                "phrase": match.group().strip(),
+                "pattern": pattern.pattern[:60],  # first 60 chars of pattern
+                "context": context,
+            })
+    return findings
+
+
 @default_retry
 def _run_llm_call(system_prompt: str, human_prompt: str) -> str:
     """Execute an LLM call for the critic loop.
@@ -123,6 +182,11 @@ def _run_llm_call(system_prompt: str, human_prompt: str) -> str:
 def score_report(topic: str, report: str) -> CritiqueResult:
     """Score a report on quality dimensions.
 
+    Hedge-Phrase Gate: runs FIRST, before any LLM call. If the report contains
+    hedging language (e.g. "further research is needed"), the LLM critic is
+    skipped entirely and the report auto-fails with the specific hedge phrase.
+    This forces the writer to replace hedges with concrete findings.
+
     Args:
         topic: The research topic.
         report: The report content to evaluate.
@@ -131,6 +195,45 @@ def score_report(topic: str, report: str) -> CritiqueResult:
         CritiqueResult with scores and feedback.
     """
     try:
+        # ── HEDGE-PHRASE GATE (runs before LLM) ────────────────────────────
+        hedge_hits = detect_hedge_phrases(report)
+        if hedge_hits:
+            # Build a clear failure for each hedge found
+            details = []
+            for h in hedge_hits:
+                details.append(
+                    f"- Hedge phrase: '{h['phrase']}' in context: "
+                    f"'...{h['context']}...'"
+                )
+            hedge_detail = "\n".join(details)
+            msg = (
+                f"Report contains {len(hedge_hits)} hedge phrase(s) instead of "
+                f"concrete findings. You wrote a hedge instead of a finding — "
+                f"search more specifically.\n\n{hedge_detail}"
+            )
+            print(f"  🚫 Hedge gate fired: {len(hedge_hits)} hedge phrase(s) found")
+
+            return CritiqueResult(
+                topic=topic,
+                overall_score=0,
+                dimensions=[
+                    DimensionScore(
+                        dimension=CritiqueDimension.FACTUAL_ACCURACY,
+                        score=0,
+                        feedback=msg,
+                        suggestion="Replace every hedge phrase with a specific, "
+                        "sourced factual claim. If sources don't answer the "
+                        "question, state that explicitly rather than writing "
+                        "a hedge.",
+                    )
+                ],
+                passed=False,
+                iteration=1,
+                summary=f"Auto-failed: {len(hedge_hits)} hedge phrase(s) found. "
+                f"First: '{hedge_hits[0]['phrase']}'.",
+            )
+
+        # ── LLM CRITIC CALL (only if hedge gate passed) ────────────────────
         human = CRITIC_HUMAN_PROMPT.format(topic=topic, report=report)
         response = _run_llm_call(CRITIC_SYSTEM_PROMPT, human)
 
