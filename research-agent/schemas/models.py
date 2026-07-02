@@ -211,11 +211,11 @@ class VerificationResult(BaseModel):
 # ── Pipeline Output ─────────────────────────────────────────────────────────
 
 class PipelineResult(BaseModel):
-    """Complete result from a research pipeline run (CrewAI or LangChain)."""
+    """Complete result from a research pipeline run (LangGraph)."""
 
     topic: str = Field(description="The research topic")
     report: str = Field(description="The final report as Markdown text")
-    mode: str = Field(description="Pipeline mode used: crewai or langchain", pattern="^(crewai|langchain)$")
+    mode: str = Field(default="langgraph", description="Pipeline engine (always langgraph)", pattern="^(langgraph)$")
     iterations: int = Field(default=1, ge=1, le=3, description="Number of critic loop iterations")
     critiques: List[CritiqueResult] = Field(default_factory=list, description="All critique results if critic loop ran")
     ragas_scores: Optional[dict] = Field(default=None, description="RAGAS evaluation scores if available")

@@ -58,22 +58,6 @@ PROVIDER_API_KEYS = {
     LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
 }
 
-# CrewAI-compatible env var mappings (set via os.environ)
-CREWAI_ENV_MAP = {
-    LLMProvider.GROQ: {
-        "OPENAI_BASE_URL": "https://api.groq.com/openai/v1",
-        "OPENAI_API_KEY": "GROQ_API_KEY",
-        "OPENAI_MODEL_NAME": "LLM_MODEL",
-    },
-    LLMProvider.OPENAI: {
-        "OPENAI_API_KEY": "OPENAI_API_KEY",
-        "OPENAI_MODEL_NAME": "LLM_MODEL",
-    },
-    LLMProvider.ANTHROPIC: {
-        "ANTHROPIC_API_KEY": "ANTHROPIC_API_KEY",
-    },
-}
-
 
 def get_provider() -> LLMProvider:
     """Get the configured LLM provider from environment.
@@ -292,35 +276,3 @@ def get_capable_llm(
     return get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
 
 
-def setup_crewai_env(provider: Optional[LLMProvider] = None, model: Optional[str] = None) -> None:
-    """Set environment variables for CrewAI to use the configured provider.
-
-    CrewAI reads OpenAI-compatible env vars (OPENAI_API_KEY, OPENAI_BASE_URL,
-    OPENAI_MODEL_NAME) regardless of the actual provider.
-
-    Args:
-        provider: The LLM provider. If None, uses the configured provider.
-        model: Optional model override. If None, uses the default (capable) model.
-    """
-    if provider is None:
-        provider = get_provider()
-
-    api_key = get_api_key(provider)
-    # CrewAI agents all share one env var model; default to capable for quality
-    model = model or get_capable_model_name(provider)
-
-    if provider == LLMProvider.GROQ:
-        os.environ["OPENAI_BASE_URL"] = PROVIDER_BASE_URLS[LLMProvider.GROQ]
-        os.environ["OPENAI_API_KEY"] = api_key or ""
-        os.environ["OPENAI_MODEL_NAME"] = model
-
-    elif provider == LLMProvider.OPENAI:
-        os.environ.pop("OPENAI_BASE_URL", None)
-        os.environ["OPENAI_API_KEY"] = api_key or ""
-        os.environ["OPENAI_MODEL_NAME"] = model
-
-    elif provider == LLMProvider.ANTHROPIC:
-        # Anthropic uses its own env var, but CrewAI needs OpenAI-compatible
-        # This uses the LiteLLM or custom approach
-        os.environ["OPENAI_API_KEY"] = api_key or ""
-        os.environ["OPENAI_MODEL_NAME"] = model

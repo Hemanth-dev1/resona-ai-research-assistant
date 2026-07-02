@@ -3,7 +3,7 @@
 **Self-correcting critic loop · RAG memory with ChromaDB · LangSmith observability · Pydantic-validated outputs · Unified LLM config (Groq / OpenAI / Anthropic)**
 
 [![Live Demo →](https://img.shields.io/badge/Live-Demo-blue?style=for-the-badge)](https://resona-ai-research-assistant.onrender.com)
-[![CrewAI](https://img.shields.io/badge/CrewAI-Multi--Agent-6c5ce7)](https://crewai.com)
+[![LangGraph](https://img.shields.io/badge/LangGraph-StateMachine-blue)](https://langchain-ai.github.io/langgraph/)
 [![LangChain](https://img.shields.io/badge/LangChain-LCEL-blue)](https://langchain.com)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-Vector--Store-green)](https://chromadb.com)
 [![Groq](https://img.shields.io/badge/Groq-LLaMA4-orange)](https://groq.com)
@@ -14,64 +14,35 @@
 [![Render](https://img.shields.io/badge/Render-Deploy-46e3b7)](https://render.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-Resona is an autonomous multi-agent AI research assistant that researches **any topic**, evaluates its own output through a **self-correcting critic loop**, and generates a professional structured report — saved as both **Markdown** and **PDF**. It runs on **CrewAI** (multi-agent) or **LangChain** (LCEL chain) backends, with **ChromaDB** RAG memory, **RAGAS** quality evaluation, and full **LangSmith** observability.
+Resona is an autonomous AI research assistant that researches **any topic**, evaluates its own output through a **self-correcting critic loop**, and generates a professional structured report — saved as both **Markdown** and **PDF**. It runs on **LangGraph** (state machine) with **langchain_groq.ChatGroq** for direct LLM access, **ChromaDB** RAG memory, **RAGAS** quality evaluation, and full **LangSmith** observability.
 
-**[Live demo →](https://resona-ai-research-assistant.onrender.com)** — enter a topic and watch three AI agents collaborate in real-time via SSE streaming.
+**[Live demo →](https://resona-ai-research-assistant.onrender.com)** — enter a topic and watch the pipeline collaborate in real-time via SSE streaming.
 
 ---
 
 ## 🏛️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        User enters a topic                          │
-└──────────────────────────┬──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        User enters a topic                           │
+└──────────────────────────┬───────────────────────────────────────────┘
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│                      Pipeline Router (router.py)                     │
-│  ┌────────────────────────────┐    ┌──────────────────────────────┐  │
-│  │       CrewAI Mode           │    │      LangChain Mode          │  │
-│  │  (role-based agents)        │    │  (LCEL chain + RAG memory)   │  │
-│  └────────────┬───────────────┘    └──────────────┬───────────────┘  │
-└───────────────┼────────────────────────────────────┼──────────────────┘
-                │                                    │
-                ▼                                    ▼
-┌──────────────────────────────┐   ┌──────────────────────────────────┐
-│ 🔍 Senior Research Analyst   │   │ 🔍 Research Chain                │
-│    (web search + scraping)    │   │    (Serper / DuckDuckGo + scrape)│
-└──────────────┬───────────────┘   └──────────────┬───────────────────┘
-               │                                   │
-               ▼                                   ▼
-┌──────────────────────────────┐   ┌──────────────────────────────────┐
-│ 🧠 Data Analyst & Insight     │   │ 🧠 Analysis Chain                │
-│    Specialist                 │   │    (theme extraction + trends)   │
-│    (pattern ID + takeaways)   │   │         ↕                        │
-└──────────────┬───────────────┘   │   ChromaDB RAG Memory             │
-               │                   └──────────────┬───────────────────┘
-               ▼                                   │
-┌──────────────────────────────┐                  │
-│ ✍️ Technical Content Writer  │                  │
-│    (8-section report)        │                  │
-└──────────────┬───────────────┘                  │
-               │                                   │
-               ▼                                   ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                      🔄 Self-Correcting Critic Loop                   │
+│                      LangGraph StateMachine (graph.py)                │
 │                                                                      │
-│  ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌────────────┐  │
-│  │ Writer   │────▶│  Critic  │────▶│ Score ≥  │────▶│  Accept    │  │
-│  │ produces │     │ scores   │     │ 7/10?    │     │  Report    │  │
-│  │ report   │     │ 0-10 on  │     │          │     │            │  │
-│  └──────────┘     │ 5 dims   │     └────┬─────┘     └────────────┘  │
-│       ▲           └──────────┘          │ No                        │
-│       │                                 ▼                           │
-│       │                        ┌──────────────────┐                 │
-│       └────────────────────────│ Specific feedback │                │
-│          Writer revises        │ sent to writer    │                │
-│                                └──────────────────┘                 │
+│  planner ──→ analysis_writer ──→ critic ──→ verifier ──→ END         │
+│                    ↑                    │  ↑           │              │
+│                    │                    ▼  │           │              │
+│                    └───────── revise ◄────┘           │              │
+│                                              (strict mode)            │
+│                                          verifier ──→ revise ◄───────┘│
 │                                                                      │
-│  Max 3 iterations · Pydantic-validated scores · Retry on failure    │
+│  • planner: Decompose topic into sub-questions (fast model)          │
+│  • analysis_writer: Analyze research + compose report (capable)      │
+│  • critic: Score report 0-10 on 5 quality dimensions                 │
+│  • revise: Regenerate report from critic feedback                    │
+│  • verifier: Fact-check claims against research material              │
 └──────────────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -97,24 +68,25 @@ Resona is an autonomous multi-agent AI research assistant that researches **any 
 
 ```
 User → Planner (sub-questions) → Parallel Research (web search × N)
-    → Analyst (themes & patterns) → Writer ⟷ Critic (self-correcting loop)
-    → Verifier (fact-check claims against research) → RAGAS Evaluation
-    → Report (MD + PDF) → ChromaDB Memory
+    → LangGraph StateMachine (analysis → critic ↔ revise → verifier)
+    → RAGAS Evaluation → Report (MD + PDF) → ChromaDB Memory
 ```
 
 ---
 
 ## ✨ Features
 
-### 1. 🧠 Multi-Agent Orchestration (CrewAI + LangChain)
+### 1. 🧠 LangGraph State Machine
 
-Two backends to choose from:
+Always uses LangGraph — no mode selection needed:
 
-| Mode | Description | Best For |
-|------|-------------|----------|
-| **LangGraph** (default) | StateGraph with conditional critic/verifier edges — planner → analysis_writer → critic ↔ revise → verifier → END | Recommended — formalized pipeline with typed state |
-| **CrewAI** | Three role-based agents (Researcher → Analyst → Writer) with explicit delegation and sequential task execution | Structured research with clear agent specializations |
-| **LangChain** | LCEL chain with ChromaDB RAG memory — retrieves relevant past reports before generating new ones | Topics with prior research context |
+| Component | Description |
+|-----------|-------------|
+| **LangGraph** | StateGraph with conditional critic/verifier edges — planner → analysis_writer → critic ↔ revise → verifier → END |
+| **langchain_groq.ChatGroq** | Direct Groq API access — no LiteLLM/CrewAI translation layer |
+| **LangChain LCEL** | Individual analysis/writing chains used as LangGraph node bodies |
+
+> Previously supported CrewAI and standalone LangChain modes. Consolidated on LangGraph to eliminate a class of provider-compatibility bugs (LiteLLM cache_breakpoint, Pydantic validation errors). The archived CrewAI code (`archive/agents.py`, `archive/tasks.py`) remains in the repo as reference.
 
 ### 2. 🔄 Self-Correcting Critic Loop
 
@@ -298,7 +270,7 @@ Enter a topic in the chat UI and watch the agents stream progress via SSE — re
 # Run research via API (SSE streaming)
 curl -X POST http://localhost:8080/api/run \
   -H "Content-Type: application/json" \
-  -d '{"topic": "Quantum computing 2026", "mode": "crewai"}'
+  -d '{"topic": "Quantum computing 2026"}'
 
 # List reports
 curl http://localhost:8080/api/reports
@@ -332,9 +304,10 @@ research-agent/
 ├── server.py               # FastAPI web server with SSE streaming
 ├── router.py               # Pipeline router (CrewAI ↔ LangChain)
 │
-├── agents.py               # Agent definitions
-├── tasks.py                # Task pipeline
-├── tools.py                # DuckDuckGo search tools (free fallback)
+├── archive/                # Archived CrewAI code (reference only)
+│   ├── agents.py
+│   ├── tasks.py
+│   └── tools.py
 │
 ├── critic.py               # Self-correcting critic loop
 ├── ragas_eval.py           # RAGAS quality evaluation
@@ -384,7 +357,6 @@ research-agent/
 | `QUALITY_THRESHOLD` | No | `7` | Critic loop pass threshold (0-10) |
 | `RESONA_CRITIC_THRESHOLD` | No | `7` | Alias for QUALITY_THRESHOLD |
 | `RESONA_MAX_CRITIC_ITERATIONS` | No | `3` | Max critic loop iterations |
-| `ORCHESTRATION` | No | `langgraph` | Pipeline mode: `langgraph` (recommended), `crewai`, or `langchain` |
 | `LLM_MODEL_FAST` | No | per-provider fast | Fast model for planner & research (e.g., `llama-3.1-8b-instant`) |
 | `LLM_MODEL_CAPABLE` | No | per-provider capable | Capable model for analyst, writer, critic (e.g., `llama-3.3-70b-versatile`) |
 | `RESEARCH_MAX_CONCURRENT` | No | `1` | Parallel research workers (1 avoids Groq rate limits, increase for paid tiers) |
@@ -505,7 +477,7 @@ Tests verify:
 - Nested output directory creation
 - Both file formats returned from `save_report()`
 - Orchestration mode selection (`get_mode()` with env var)
-- Pipeline mode routing (LangGraph, CrewAI, LangChain)
+- LangGraph state machine routing (planner → analysis → critic → verifier)
 - Fallback web research for CLI mode
 
 ---
@@ -514,7 +486,7 @@ Tests verify:
 
 | Technology | Purpose |
 |------------|---------|
-| **[CrewAI](https://crewai.com)** | Multi-agent orchestration (v0.80+) |
+| **[LangGraph](https://langchain-ai.github.io/langgraph/)** | State machine orchestration |
 | **[LangChain](https://langchain.com)** | Alternative orchestration via LCEL |
 | **[Groq](https://groq.com)** | LLM inference (Llama 3.1, Mixtral, etc.) |
 | **[OpenAI](https://openai.com)** | LLM inference (GPT-4o, GPT-4o-mini) |

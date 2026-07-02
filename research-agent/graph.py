@@ -25,7 +25,7 @@ class ResearchState(TypedDict):
 
     topic: str
     memory_context: str
-    mode: str                       # 'langchain' | 'crewai'
+    mode: str                       # 'langchain' (reserved for future providers)
     plan: Optional[dict]
     sub_questions: list
     merged_research: str
@@ -64,8 +64,7 @@ def analysis_writer_node(state: ResearchState) -> dict:
     """Analyze merged research and write the report.
 
     Uses the capable model via LangChain chain.
-    (CrewAI mode for analysis+writing is not supported inside the graph —
-     use 'langchain' mode for graph, and CrewAI for the full pipeline.)
+    (Only 'langchain' mode is supported inside the graph.)
     """
     topic = state["topic"]
     merged = state["merged_research"]
@@ -321,7 +320,7 @@ def run_pipeline_graph(
         merged_research: Pre-computed research from parallel queue (optional).
             If empty, the graph will run planner + LLM research internally.
         memory_context: Optional ChromaDB context.
-        mode: 'langchain' for analysis+writing (CrewAI not supported in graph).
+        mode: 'langchain' for analysis+writing.
         max_critic_iterations: Max critic loop iterations.
         strict_verification: If True, failed verification routes back to revise.
 
