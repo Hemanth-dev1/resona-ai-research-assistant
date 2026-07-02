@@ -161,10 +161,9 @@ ResearchReport(
 
 Full tracing via OpenTelemetry for every research run:
 
-- **CrewAI Mode:** Every agent step, tool call, task execution, and LLM invocation
-- **LangChain Mode:** Every LCEL chain invocation (research → analysis → writing)
-- **LLM Calls:** Token counts, latency, costs for every API call
-- **Pipeline Router:** Top-level `run()` function call with inputs/outputs
+- **LangGraph Mode:** Every LangGraph node, critic loop iteration, and LLM invocation
+- **LLM Calls:** Token counts, latency, costs for every API call (via langchain-groq)
+- **Pipeline Router:** Top-level `run_analysis()` call with inputs/outputs
 
 #### LangSmith Screenshot
 
@@ -302,7 +301,7 @@ research-agent/
 │
 ├── main.py                 # CLI entry point + report generation
 ├── server.py               # FastAPI web server with SSE streaming
-├── router.py               # Pipeline router (CrewAI ↔ LangChain)
+├── router.py               # Pipeline router (always LangGraph)
 │
 ├── archive/                # Archived CrewAI code (reference only)
 │   ├── agents.py
@@ -476,7 +475,6 @@ Tests verify:
 - PDF file creation with valid PDF header
 - Nested output directory creation
 - Both file formats returned from `save_report()`
-- Orchestration mode selection (`get_mode()` with env var)
 - LangGraph state machine routing (planner → analysis → critic → verifier)
 - Fallback web research for CLI mode
 
@@ -487,7 +485,7 @@ Tests verify:
 | Technology | Purpose |
 |------------|---------|
 | **[LangGraph](https://langchain-ai.github.io/langgraph/)** | State machine orchestration |
-| **[LangChain](https://langchain.com)** | Alternative orchestration via LCEL |
+| **[LangChain](https://langchain.com)** | LCEL chains used as LangGraph node bodies |
 | **[Groq](https://groq.com)** | LLM inference (Llama 3.1, Mixtral, etc.) |
 | **[OpenAI](https://openai.com)** | LLM inference (GPT-4o, GPT-4o-mini) |
 | **[Anthropic](https://anthropic.com)** | LLM inference (Claude 3.5 Sonnet) |
@@ -498,8 +496,7 @@ Tests verify:
 | **[Pydantic](https://docs.pydantic.dev)** | Typed data validation for agent outputs |
 | **[Tenacity](https://tenacity.readthedocs.io)** | Retry logic with exponential backoff |
 | **[Sentence-Transformers](https://sbert.net)** | Embedding model (`all-MiniLM-L6-v2`) |
-| **[SerperDevTool](https://serper.dev)** | Google search API (optional, preferred) |
-| **[DuckDuckGo Search](https://pypi.org/project/duckduckgo-search/)** | Free web search fallback |
+| **[DuckDuckGo Search](https://pypi.org/project/duckduckgo-search/)** | Free web search (no API key needed) |
 | **[WeasyPrint](https://weasyprint.org)** | HTML/CSS to PDF rendering |
 | **[FastAPI](https://fastapi.tiangolo.com)** | Web server with SSE streaming |
 | **[Uvicorn](https://www.uvicorn.org)** | ASGI server |
