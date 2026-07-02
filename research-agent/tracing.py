@@ -50,15 +50,6 @@ def setup_tracing() -> bool:
         os.environ["LANGSMITH_TRACING"] = "true"
         os.environ["LANGSMITH_PROJECT"] = project
 
-        # Instrument CrewAI (captures agent steps, tool calls, task execution)
-        try:
-            from opentelemetry.instrumentation.crewai import CrewAIInstrumentor
-
-            CrewAIInstrumentor().instrument(tracer_provider=tracer_provider)
-            print(f"  📡 LangSmith: CrewAI instrumentation active → project '{project}'")
-        except ImportError:
-            print("  ⚠️  LangSmith: opentelemetry-instrumentation-crewai not available")
-
         # Instrument OpenAI-compatible API (captures LLM calls — works with Groq)
         try:
             from opentelemetry.instrumentation.openai import OpenAIInstrumentor

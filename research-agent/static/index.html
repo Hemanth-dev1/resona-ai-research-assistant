@@ -346,7 +346,7 @@ function AssistantMessage({ message, onRegenerate }) {
   );
 }
 
-function InputBar({ value, onChange, onSubmit, onStop, isStreaming, pipeline, onPipelineChange }) {
+function InputBar({ value, onChange, onSubmit, onStop, isStreaming }) {
   const ref = useRef(null);
   useEffect(() => {
     const el = ref.current; if (!el) return;
@@ -355,15 +355,6 @@ function InputBar({ value, onChange, onSubmit, onStop, isStreaming, pipeline, on
   }, [value]);
   return h('div', { className: 'px-4 pb-4 pt-2' },
     h('div', { className: 'max-w-3xl mx-auto w-full' },
-      h('div', { className: 'flex justify-center mb-2.5' },
-        h('div', { className: 'inline-flex items-center gap-0.5 p-0.5 rounded-full bg-surface border border-border text-[11.5px]' },
-          ['langgraph', 'crewai', 'langchain'].map(p => h('button', {
-            key: p,
-            onClick: () => onPipelineChange(p),
-            className: `px-3 py-1 rounded-full font-medium transition ${pipeline === p ? 'bg-primary text-primary-fg' : 'text-muted hover:text-foreground'}`
-          }, p === 'langgraph' ? 'LangGraph' : p === 'crewai' ? 'CrewAI' : 'LangChain'))
-        )
-      ),
       h('form', {
         onSubmit: (e) => { e.preventDefault(); if (!isStreaming && value.trim()) onSubmit(); },
         className: 'relative flex items-end gap-2 rounded-2xl border border-border bg-surface focus-within:border-primary/50 p-2 pl-4 shadow-lg shadow-black/20'
@@ -404,7 +395,7 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [pipeline, setPipeline] = useState('crewai');
+  const pipeline = 'langgraph';
   const [streaming, setStreaming] = useState(false);
   const [reports, setReports] = useState([]);
   const [memories, setMemories] = useState([]);
@@ -464,7 +455,7 @@ function App() {
     abortRef.current = ctrl;
     try {
       await runResearch({
-        query: q, pipeline, signal: ctrl.signal,
+        query: q,        pipeline: 'langgraph', signal: ctrl.signal,
         onEvent: (ev) => {
           switch (ev.type) {
             case 'phase':
@@ -556,7 +547,7 @@ function App() {
             },
             className: 'text-[11px] text-primary hover:underline'
           }, '⬇ PDF'),
-          h('span', {}, `Pipeline: ${pipeline === 'crewai' ? 'CrewAI' : 'LangChain'}`)
+          h('span', { className: 'text-[11px] text-muted' }, 'Engine: LangGraph')
         )
       ),
       h('div', { ref: scrollRef, className: 'flex-1 overflow-y-auto scroll-thin' },
@@ -579,8 +570,7 @@ function App() {
         onSubmit: () => handleSubmit(),
         onStop: stop,
         isStreaming: streaming,
-        pipeline,
-        onPipelineChange: setPipeline,
+
       })
     )
   );

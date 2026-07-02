@@ -20,9 +20,7 @@ load_dotenv()
 from tracing import setup_tracing
 setup_tracing()
 
-# Set up unified LLM config
-from llm_config import setup_crewai_env, get_provider, get_model_name
-setup_crewai_env()
+from llm_config import get_provider, get_model_name
 
 # Validate API keys
 provider = get_provider()
@@ -123,12 +121,11 @@ def run():
         print("No topic entered. Exiting.")
         return
 
-    from orchestrator import run_pipeline, get_mode
-    mode = get_mode().value
+    from orchestrator import run_pipeline
 
-    print(f"\n🚀 Starting research on: '{topic}' | mode={mode}\n")
+    print(f"\n🚀 Starting research on: '{topic}'\n")
 
-    result = run_pipeline(topic, mode=mode)
+    result = run_pipeline(topic)
 
     if result.get("error"):
         print(f"❌ {result['error']}")
@@ -150,7 +147,7 @@ def run():
     print("  ✅ Research Complete!")
     print(f"{'=' * 60}")
     print(f"  Topic:        {topic}")
-    print(f"  Mode:         {mode}")
+    print(f"  Engine:       LangGraph")
     print(f"  Markdown:     {md_path}")
     if pdf_path:
         print(f"  PDF:          {pdf_path}")

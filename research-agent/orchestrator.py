@@ -1,4 +1,4 @@
-"""Unified pipeline orchestrator with mode selection.
+"""Unified pipeline orchestrator — always uses LangGraph.
 
 Provides a single run_pipeline() entry point that coordinates:
 1. Planning (decompose topic into sub-questions)
@@ -7,67 +7,34 @@ Provides a single run_pipeline() entry point that coordinates:
 The async parallel research step and SSE streaming are handled by server.py
 for UI interactivity. The orchestrator focuses on the synchronous core pipeline.
 
-Configured via ORCHESTRATION env var: langgraph (default), crewai, or langchain.
-
 Usage:
-    from orchestrator import run_pipeline, get_mode, OrchestrationMode
+    from orchestrator import run_pipeline
 
-    result = run_pipeline("AI safety", mode="langgraph")
+    result = run_pipeline("AI safety")
     print(result["report"])
     print(result["critique_iterations"], result["verification_result"])
 """
 
 import os
 import time
-from enum import Enum
 from typing import Optional
 
 
-class OrchestrationMode(str, Enum):
-    """Available pipeline orchestration modes."""
+def get_mode() -> str:
+    """Return the orchestration mode — always 'langgraph'.
 
-    LANGGRAPH = "langgraph"  # LangGraph StateGraph (recommended, default)
-    CREWAI = "crewai"        # CrewAI agent pipeline
-    LANGCHAIN = "langchain"  # LangChain LCEL chains
-
-
-# Default mode if ORCHESTRATION env var is not set
-_DEFAULT_MODE = OrchestrationMode.LANGGRAPH
-
-
-def get_mode() -> OrchestrationMode:
-    """Get the configured orchestration mode from the ORCHESTRATION env var.
-
-    Returns:
-        OrchestrationMode enum value.
-        Defaults to LANGGRAPH if ORCHESTRATION is not set or invalid.
+    Kept as a function for backward compatibility with imports.
     """
-    mode_str = os.getenv("ORCHESTRATION", "langgraph").lower().strip()
-    try:
-        return OrchestrationMode(mode_str)
-    except ValueError:
-        valid = ", ".join(m.value for m in OrchestrationMode)
-        print(f"  ⚠️  Unknown ORCHESTRATION='{mode_str}'. Valid: {valid}. Falling back to langgraph.")
-        return _DEFAULT_MODE
-
-
-def get_available_modes() -> list[str]:
-    """Get list of available orchestration modes.
-
-    Returns:
-        List of mode name strings.
-    """
-    return [m.value for m in OrchestrationMode]
+    return "langgraph"
 
 
 def run_pipeline(
     topic: str,
     merged_research: str = "",
-    mode: Optional[str] = None,
     memory_context: str = "",
     max_critic_iterations: int = 3,
 ) -> dict:
-    """Run the analysis + writing + critic + verification pipeline.
+    """Run the analysis + writing + critic + verification pipeline via LangGraph.
 
     This is the synchronous core of the research pipeline. The async parallel
     research step (web search) and SSE streaming are handled by server.py.
@@ -76,8 +43,6 @@ def run_pipeline(
         topic: The research topic.
         merged_research: Pre-computed research from parallel queue.
             If empty, the graph will run planner + LLM research internally.
-        mode: Orchestration mode ('langgraph', 'crewai', 'langchain').
-            If None, uses get_mode() to read the ORCHESTRATION env var.
         memory_context: Optional context from ChromaDB memory.
         max_critic_iterations: Max critic loop iterations.
 
@@ -91,14 +56,10 @@ def run_pipeline(
             - plan (dict or None): Planner output
             - sub_questions (list): Planner sub-questions
             - error (str or None): Error message if pipeline failed
-            - mode (str): The mode that was used
             - duration_seconds (float): Total pipeline duration
     """
-    if mode is None:
-        mode = get_mode().value
-
     start_time = time.time()
-    print(f"\n🚀 Pipeline: '{topic}' | mode={mode} | research={len(merged_research)} chars")
+    print(f"\n🚀 Pipeline: '{topic}' | research={len(merged_research)} chars")
 
     # Step 1: Plan + Research (if no merged_research provided)
     plan = None
@@ -126,10 +87,10 @@ def run_pipeline(
             print(f"  ⚠️  Web search failed: {e} — using LLM-only mode")
             merged_research = ""
 
-    # Step 2: Analysis + Writing + Critic + Verification
+    # Step 2: Analysis + Writing + Critic + Verification (always LangGraph)
     from router import run_analysis
     report, critique_iterations, verification_result = run_analysis(
-        topic, merged_research, mode=mode
+        topic, merged_research
     )
 
     if report.startswith("❌"):
@@ -143,7 +104,6 @@ def run_pipeline(
             "plan": plan,
             "sub_questions": sub_questions,
             "error": report,
-            "mode": mode,
             "duration_seconds": duration,
         }
 
@@ -153,12 +113,11 @@ def run_pipeline(
     return {
         "report": report,
         "critique_iterations": critique_iterations,
-        "critique_score": None,  # Available from graph but not returned by router
+        "critique_score": None,
         "critique_passed": None,
         "verification_result": verification_result,
         "plan": plan,
         "sub_questions": sub_questions,
         "error": None,
-        "mode": mode,
         "duration_seconds": duration,
     }

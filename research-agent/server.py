@@ -29,13 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from tracing import setup_tracing
 setup_tracing()
 
-# Set up CrewAI environment from unified LLM config
-from llm_config import setup_crewai_env, get_provider
-setup_crewai_env()
-
-# Initialize orchestrator config
-from orchestrator import get_mode as get_orch_mode
-get_orch_mode()  # Validate ORCHESTRATION env var at startup
+from llm_config import get_provider
 
 app = FastAPI(title="Resona", version="1.1.0")
 
@@ -92,10 +86,11 @@ def _chunk_report(text: str, min_chunk: int = 200) -> list[str]:
     return chunks if chunks else [text]
 
 
-async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "markdown+pdf", model: str = None, mode: str = None):
+async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "markdown+pdf", model: str = None):
     """Yield SSE events as the agent pipeline progresses and content streams.
 
     Orchestrates: plan → parallel research (throttled) → analysis → writing → stream
+    All pipelines use the LangGraph engine.
     """
 
     def send(event: str, data: dict):
@@ -110,14 +105,9 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
             yield send("error", {"message": f"{key_name} not found in .env file for provider '{provider.value}'."})
             return
 
-        # Resolve mode from orchestrator if not specified
-        if mode is None:
-            from orchestrator import get_mode as get_orch_mode
-            mode = get_orch_mode().value
+        mode_label = "LangGraph"
 
         # ── Step 0: Plan ──────────────────────────────────────────────────
-        mode_labels = {"crewai": "CrewAI", "langchain": "LangChain", "langgraph": "LangGraph"}
-        mode_label = mode_labels.get(mode, mode.capitalize())
         yield send("phase", {
             "phase": "planning", "status": "running",
             "message": f"📋 {mode_label}: Planning research strategy...",
@@ -197,7 +187,7 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
         # ── Step 2: Analysis + Writing ────────────────────────────────────
         yield send("phase", {
             "phase": "analysis", "status": "running",
-            "message": f"🧠 {mode_label}: Analyzing findings...",
+            "message": f"🧠 LangGraph: Analyzing findings...",
             "progress": 45,
         })
         await asyncio.sleep(0.1)
@@ -211,16 +201,16 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
 
         yield send("phase", {
             "phase": "writing", "status": "running",
-            "message": f"✍️ {mode_label}: Writing report...",
+            "message": f"✍️ LangGraph: Writing report...",
             "progress": 65,
         })
 
-        yield send("content_start", {"message": f"{mode_label} composing the report..."})
+        yield send("content_start", {"message": f"LangGraph composing the report..."})
 
         # Run analysis + writing + verification via router (synchronous, in thread)
         from router import run_analysis
         report, critique_iterations, verification_result = await asyncio.to_thread(
-            run_analysis, topic, merged_research, mode=mode
+            run_analysis, topic, merged_research
         )
 
         if report.startswith("❌"):
@@ -305,7 +295,7 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
             "has_pdf": pdf_path is not None and os.path.exists(pdf_path),
             "full_content": md_content,
             "progress": 100,
-            "mode": mode,
+            "mode": "langgraph",
             "iterations": critique_iterations,
             "ragas_scores": ragas_scores,
         })
@@ -325,16 +315,12 @@ async def api_run(request: Request):
     if not topic:
         return {"error": "No topic provided"}
 
-    from orchestrator import get_mode as get_orch_mode
-    mode = body.get("mode") or get_orch_mode().value
-
     return EventSourceResponse(
         run_agent_events(
             topic=topic,
             depth=body.get("depth", "standard"),
             fmt=body.get("format", "markdown+pdf"),
             model=body.get("model"),
-            mode=mode,
         )
     )
 
