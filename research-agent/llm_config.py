@@ -16,9 +16,14 @@ from typing import Any, Optional
 
 
 class LLMProvider(str, Enum):
-    """Supported LLM providers."""
+    """Supported LLM providers.
+
+    GROQ is the primary (default) provider.  GEMINI is the automatic
+    fallback when Groq's combined daily token budget is near exhaustion.
+    """
 
     GROQ = "groq"
+    GEMINI = "gemini"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
 
@@ -26,6 +31,7 @@ class LLMProvider(str, Enum):
 # Default models per provider
 PROVIDER_DEFAULT_MODELS = {
     LLMProvider.GROQ: "llama-3.1-8b-instant",
+    LLMProvider.GEMINI: "gemini-3.5-flash",
     LLMProvider.OPENAI: "gpt-4o",
     LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20240620",
 }
@@ -33,6 +39,7 @@ PROVIDER_DEFAULT_MODELS = {
 # Fast (cheap/light) models for Planner, Research, Verification nodes
 PROVIDER_FAST_MODELS = {
     LLMProvider.GROQ: "llama-3.1-8b-instant",
+    LLMProvider.GEMINI: "gemini-3.5-flash",
     LLMProvider.OPENAI: "gpt-4o-mini",
     LLMProvider.ANTHROPIC: "claude-3-5-haiku-20241022",
 }
@@ -40,6 +47,7 @@ PROVIDER_FAST_MODELS = {
 # Capable (high-quality) models for Analyst, Writer, Critic nodes
 PROVIDER_CAPABLE_MODELS = {
     LLMProvider.GROQ: "llama-3.3-70b-versatile",
+    LLMProvider.GEMINI: "gemini-3.5-flash",  # Lower cap but much higher TPD budget
     LLMProvider.OPENAI: "gpt-4o",
     LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20240620",
 }
@@ -47,6 +55,7 @@ PROVIDER_CAPABLE_MODELS = {
 # Base URLs per provider
 PROVIDER_BASE_URLS = {
     LLMProvider.GROQ: "https://api.groq.com/openai/v1",
+    LLMProvider.GEMINI: None,  # Uses Google AI default
     LLMProvider.OPENAI: None,  # Uses OpenAI default
     LLMProvider.ANTHROPIC: None,  # Uses Anthropic default
 }
@@ -54,6 +63,7 @@ PROVIDER_BASE_URLS = {
 # API key env vars per provider
 PROVIDER_API_KEYS = {
     LLMProvider.GROQ: "GROQ_API_KEY",
+    LLMProvider.GEMINI: "GOOGLE_API_KEY",
     LLMProvider.OPENAI: "OPENAI_API_KEY",
     LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
 }
@@ -188,7 +198,7 @@ def get_llm(
             os.environ["OPENAI_API_KEY"] = api_key
             os.environ["OPENAI_MODEL_NAME"] = model
 
-            return ChatGroq(
+            llm = ChatGroq(
                 api_key=api_key,
                 model=model,
                 temperature=temperature,
@@ -197,6 +207,21 @@ def get_llm(
         except ImportError:
             raise ImportError("langchain-groq not installed. Run: pip install langchain-groq")
 
+    elif provider == LLMProvider.GEMINI:
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+
+            llm = ChatGoogleGenerativeAI(
+                google_api_key=api_key,
+                model=model,
+                temperature=temperature,
+                max_output_tokens=max_tokens if max_tokens else None,
+            )
+        except ImportError:
+            raise ImportError(
+                "langchain-google-genai not installed. Run: pip install langchain-google-genai"
+            )
+
     elif provider == LLMProvider.OPENAI:
         try:
             from langchain_openai import ChatOpenAI
@@ -204,7 +229,7 @@ def get_llm(
             os.environ["OPENAI_API_KEY"] = api_key
             os.environ["OPENAI_MODEL_NAME"] = model
 
-            return ChatOpenAI(
+            llm = ChatOpenAI(
                 api_key=api_key,
                 model=model,
                 temperature=temperature,
@@ -217,7 +242,7 @@ def get_llm(
         try:
             from langchain_anthropic import ChatAnthropic
 
-            return ChatAnthropic(
+            llm = ChatAnthropic(
                 api_key=api_key,
                 model=model,
                 temperature=temperature,
@@ -231,6 +256,8 @@ def get_llm(
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 
+    return llm
+
 
 def get_fast_llm(
     provider: Optional[LLMProvider] = None,
@@ -238,6 +265,10 @@ def get_fast_llm(
     max_tokens: int = 4096,
 ) -> Any:
     """Get a fast/cheap LLM for simple tasks (Planner, Research, Verification).
+
+    Includes **provider-level fallback**: if Groq's combined daily budget is
+    near exhaustion, automatically routes to Gemini Flash instead of
+    hard-failing with a 429.
 
     Uses LLM_MODEL_FAST or the provider's fast model default.
 
@@ -247,10 +278,24 @@ def get_fast_llm(
         max_tokens: Maximum tokens in response (default: 4096).
 
     Returns:
-        An LLM instance configured with the fast model.
+        An LLM instance configured with the fast model (possibly on a
+        fallback provider).
     """
     provider = provider or get_provider()
     model = get_fast_model_name(provider)
+
+    # ── Provider-level fallback: if Groq exhausted, route to Gemini ────
+    from token_tracker import check_provider_fallback
+    fb_provider, fb_model = check_provider_fallback(
+        "groq",
+        fallback_model_name="gemini-3.5-flash",
+        fallback_provider=LLMProvider.GEMINI,
+    )
+    if fb_provider is not None:
+        # Fallback triggered — use Gemini with its fast model
+        model = get_fast_model_name(fb_provider)
+        return get_llm(provider=fb_provider, model=model, temperature=temperature, max_tokens=max_tokens)
+
     return get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
 
 
@@ -261,18 +306,53 @@ def get_capable_llm(
 ) -> Any:
     """Get a capable/high-quality LLM for complex reasoning (Analyst, Writer, Critic).
 
+    Includes **provider-level fallback**: the fallback chain is:
+        1. Groq 70B (primary) — fastest, highest quality
+        2. Gemini Flash (cross-provider fallback) — when Groq's daily budget
+           is near exhaustion
+        3. Groq 8B (tertiary) — when Gemini is unavailable or the prompt
+           doesn't need Flash-level quality
+
     Uses LLM_MODEL_CAPABLE or the provider's capable model default.
 
     Args:
         provider: LLM provider. If None, uses LLM_PROVIDER env var.
         temperature: Sampling temperature (default: 0.3).
-        max_tokens: Maximum tokens in response (default: 8192 for longer outputs).
+        max_tokens: Maximum tokens in response (default: 8192 for longer
+            outputs; clamped to 4096 when falling back to 8B models).
 
     Returns:
-        An LLM instance configured with the capable model.
+        An LLM instance configured with the capable model (possibly on a
+        fallback provider).
     """
     provider = provider or get_provider()
-    model = get_capable_model_name(provider)
+    configured_model = get_capable_model_name(provider)
+    fast_model = get_fast_model_name(provider)
+
+    # ── Step 1: Provider-level fallback (Groq exhausted → Gemini) ──────
+    from token_tracker import check_provider_fallback
+    fb_provider, fb_model = check_provider_fallback(
+        "groq",
+        fallback_model_name="gemini-3.5-flash",
+        fallback_provider=LLMProvider.GEMINI,
+    )
+    if fb_provider is not None:
+        # Cross-provider fallback: use Gemini Flash
+        return get_llm(
+            provider=fb_provider,
+            model=get_capable_model_name(fb_provider),
+            temperature=temperature,
+            max_tokens=min(max_tokens, 4096),  # Gemini Flash handles 8K output
+        )
+
+    # ── Step 2: Model-level soft guard (70B budget near limit → 8B) ────
+    from token_tracker import check_model_fallback
+    model = check_model_fallback(configured_model, fallback_model=fast_model)
+
+    # ── Model-aware max_tokens clamping ───────────────────────────────
+    if model and "8b" in model.lower() and max_tokens > 6000:
+        max_tokens = 4096
+
     return get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
 
 

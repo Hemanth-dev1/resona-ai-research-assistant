@@ -11,6 +11,7 @@ the graph by server.py. If the graph receives pre-computed merged_research
 (and thus planning already happened), it skips directly to analysis_writer.
 """
 
+import re
 from typing import Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -105,21 +106,39 @@ def analysis_writer_node(state: ResearchState) -> dict:
         merged += feedback
         print(f"  🔄 Graph: Injected {len(unsupported)} unsupported claim(s) as feedback")
 
-    if not merged:
-        # No external research — run planner first, then use LLM-only research
-        from chain.chain import run_planner
-        plan = run_planner(topic)
-        sub_qs = plan.get("sub_questions", []) if plan else []
-        from chain.prompts import RESEARCHER_PROMPT
-        from llm_config import get_fast_llm
-        from langchain_core.output_parsers import StrOutputParser
-        llm = get_fast_llm(temperature=0.3, max_tokens=4096)
-        chain = RESEARCHER_PROMPT | llm | StrOutputParser()
-        merged = chain.invoke({
-            "topic": topic,
-            "memory_context": state.get("memory_context", "") or "No prior context.",
-            "sub_questions": "",
-        })
+    if not merged or len(merged) < 50:
+        # No external research — mark clearly rather than letting LLM fabricate
+        # Without real search results, any LLM-generated text risks hallucination.
+        merged = (
+            "## Research Results\n\n"
+            "No web search results were retrieved for this topic. "
+            "The following report is based solely on the existing knowledge of "
+            "the language model and may contain inaccuracies. No sources are available.\n\n"
+            "## Tracked Sources\n\n"
+            "No sources were retrieved during research.\n"
+        )
+        print(f"  ⚠️  Graph: No search results for '{topic}' — marking as source-free research")
+
+    # ── DEBUG: Log the actual sources being passed to the Analyst ──────
+    tracked_sources_match = re.search(
+        r"## Tracked Sources\s*\n(.*?)(?:\n##|\Z)", merged, re.DOTALL
+    )
+    if tracked_sources_match:
+        sources_raw = tracked_sources_match.group(1).strip()
+        source_ids = re.findall(r"\[S(\d+)\]", sources_raw)
+        if source_ids:
+            print(f"  📚 Analyst receives {len(source_ids)} real sources: S{', S'.join(source_ids)}")
+            # Print first 3 source entries for verification
+            for line in sources_raw.split("\n")[:12]:
+                stripped = line.strip()
+                if stripped:
+                    print(f"     {stripped[:120]}")
+        else:
+            print(f"  ⚠️  Tracked Sources section found but no [S#] IDs parsed")
+            print(f"     First 200 chars: {sources_raw[:200]}")
+    else:
+        print(f"  ⚠️  No Tracked Sources section found in merged research ({len(merged)} chars)")
+        print(f"     First 100 chars: {merged[:100]!r}")
 
     print(f"  🧠 Graph: Analyzing + writing report...")
     from chain.chain import run_analysis_writing
@@ -292,7 +311,7 @@ def verifier_node(state: ResearchState) -> dict:
     report = state["report"]
     merged_research = state.get("merged_research", "")
     iteration = state.get("verification_iterations", 0) + 1
-    max_iter = state.get("max_verification_iterations", 1)
+    max_iter = state.get("max_verification_iterations", 2)
 
     print(f"  ✅ Graph: Verifying report against research (attempt {iteration}/{max_iter})...")
 
@@ -328,7 +347,7 @@ def route_after_verifier(state: ResearchState) -> str:
     passed = state.get("verification_passed", True)
     strict = state.get("strict_verification", False)
     iterations = state.get("verification_iterations", 0)
-    max_iter = state.get("max_verification_iterations", 1)
+    max_iter = state.get("max_verification_iterations", 2)
 
     if not passed and strict and iterations < max_iter:
         print(f"  🔄 Graph: Verification failed ({iterations}/{max_iter}) — routing back to revise")
@@ -424,7 +443,7 @@ def run_pipeline_graph(
     memory_context: str = "",
     mode: str = "langchain",
     max_critic_iterations: int = 3,
-    strict_verification: bool = False,
+    strict_verification: bool = True,
 ) -> dict:
     """Run the research pipeline via LangGraph.
 
@@ -461,7 +480,7 @@ def run_pipeline_graph(
         "verification_summary": None,
         "verification_findings": [],
         "verification_iterations": 0,
-        "max_verification_iterations": 1,
+        "max_verification_iterations": 2,
         "total_claims_checked": 0,
         "strict_verification": strict_verification,
         "claim_verification_passed": None,
@@ -474,6 +493,48 @@ def run_pipeline_graph(
 
     try:
         final_state = graph.invoke(initial_state)
+
+        # ── HARD GATE: If claim_verifier still has unresolved unsupported
+        #    claims after max iterations, append a transparent warning to
+        #    the partial report instead of discarding it entirely.  The user
+        #    gets the verified sections plus an explicit "could not verify"
+        #    note for the problematic claims.
+        unsupported = final_state.get("unsupported_claims", [])
+        if unsupported:
+            print(f"  🚫 HARD GATE: {len(unsupported)} unresolved unsupported claim(s) — appending warning")
+            report = final_state.get("report", "") or ""
+            warning = (
+                "\n\n---\n"
+                "## ⚠️ Could Not Verify\n"
+                "The following claims could not be verified against reliable sources. "
+                "The rest of the report above has passed fact-checking.\n"
+                f"*Topic:* {topic}\n"
+                f"*Reason:* Insufficient reliable sources to confirm these statements.\n\n"
+            )
+            for uc in unsupported:
+                sid = uc.get("source_id", "?")
+                claim = uc.get("claim_text", "")[:200]
+                reason = uc.get("reason", "")[:200]
+                warning += f"- **[{sid}]** \"{claim}\" — {reason}\n"
+            warning += (
+                "\n*These sections were removed from the verified report above. "
+                "Try running a more specific search query for this topic.*\n"
+            )
+            report += warning
+            return {
+                "report": report,
+                "critique_iterations": final_state.get("critique_iterations", 0),
+                "critique_score": final_state.get("critique_score"),
+                "critique_passed": final_state.get("critique_passed"),
+                "plan": final_state.get("plan"),
+                "sub_questions": final_state.get("sub_questions", []),
+                "verification_passed": False,
+                "verification_summary": warning.strip(),
+                "verification_findings": unsupported,
+                "total_claims_checked": final_state.get("total_claims_checked", 0),
+                "error": None,  # Not an error — partial report is returned
+            }
+
         return {
             "report": final_state.get("report", ""),
             "critique_iterations": final_state.get("critique_iterations", 0),

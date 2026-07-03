@@ -78,7 +78,8 @@ def run_planner(topic: str) -> Optional[dict]:
     """
     try:
         planner_chain, _, _, _ = _get_chains()
-        raw = planner_chain.invoke({"topic": topic})
+        from token_tracker import track_chain_invoke
+        raw = track_chain_invoke("llama-3.1-8b-instant", planner_chain, {"topic": topic})
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
         if json_match:
             plan = json.loads(json_match.group())
@@ -147,7 +148,8 @@ def run_analysis_writing(topic: str, merged_research: str) -> dict:
     _, _, analysis_chain, writer_chain = _get_chains()
 
     print(f"  🧠 LangChain: Analyzing findings from {len(merged_research)} chars of research...")
-    raw_analysis = analysis_chain.invoke({"research": merged_research})
+    from token_tracker import track_chain_invoke
+    raw_analysis = track_chain_invoke("llama-3.3-70b-versatile", analysis_chain, {"research": merged_research})
 
     # Parse the structured JSON from the analyst
     analysis_text = raw_analysis
@@ -194,7 +196,7 @@ def run_analysis_writing(topic: str, merged_research: str) -> dict:
         )
 
     print(f"  ✍️  LangChain: Writing report...")
-    report = writer_chain.invoke(writer_input)
+    report = track_chain_invoke("llama-3.3-70b-versatile", writer_chain, writer_input)
 
     # ── Post-processing: ensure Sources section exists ──────────────────────
     report = _ensure_sources_section(report, sources_data)
@@ -299,8 +301,9 @@ def run_langchain(topic: str, memory_context: str = "") -> dict:
 
     # Step 1: Research (sequential - used when run_parallel_research not available)
     print(f"  🔍 LangChain: Researching '{topic}'...")
+    from token_tracker import track_chain_invoke
     _, research_chain, _, _ = _get_chains()
-    research = research_chain.invoke({
+    research = track_chain_invoke("llama-3.1-8b-instant", research_chain, {
         "topic": topic,
         "memory_context": memory_context or "No prior context available.",
         "sub_questions": sub_questions_str,
@@ -339,14 +342,15 @@ def run_verification(topic: str, report: str, merged_research: str) -> dict:
     """
     try:
         from langchain_core.output_parsers import StrOutputParser
-        from llm_config import get_capable_llm
+        from llm_config import get_fast_llm  # Verification doesn't need 70B — 8B is sufficient
         from chain.prompts import VERIFIER_PROMPT
 
-        llm = get_capable_llm(temperature=0.1, max_tokens=4096)
+        llm = get_fast_llm(temperature=0.1, max_tokens=4096)
         chain = VERIFIER_PROMPT | llm | StrOutputParser()
 
         print(f"  ✅ Verifier: Fact-checking report against research...")
-        raw = chain.invoke({
+        from token_tracker import track_chain_invoke
+        raw = track_chain_invoke("llama-3.1-8b-instant", chain, {
             "topic": topic,
             "merged_research": merged_research[:12000],
             "report": report,
@@ -400,6 +404,28 @@ def run_claim_verification(topic: str, report: str, merged_research: str) -> dic
     # ── Step 1: Extract source snippets from merged_research ────────────────
     source_snippets: dict[str, str] = _extract_source_snippets(merged_research)
 
+    # ── HARD GATE: If no source snippets available, every [S#] citation is
+    #    potentially fabricated. Fail with a clear message so the pipeline
+    #    routes back to analysis_writer with this feedback.
+    if not source_snippets:
+        print(f"  ❌ Claim Verifier: No source snippets available — cannot verify any claims")
+        print(f"  ❌ Every [S#] citation in the report is potentially fabricated.")
+        return {
+            "passed": False,
+            "claims_checked": 0,
+            "unsupported_claims": [
+                {
+                    "claim_text": "The report contains citations to sources that do not exist in the research material.",
+                    "source_id": "N/A",
+                    "source_url": "",
+                    "reason": "No tracked sources were found in the merged research. "
+                    "The Analyst must re-analyze using ONLY the provided web search "
+                    "results without inventing source IDs or citations.",
+                }
+            ],
+            "summary": "CRITICAL: No source snippets available — all [S#] citations are fabricated.",
+        }
+
     # ── Step 2: Parse report for [S#] citations and surrounding claims ──────
     claim_pairs = _extract_claim_source_pairs(report, source_snippets)
 
@@ -450,6 +476,8 @@ def run_claim_verification(topic: str, report: str, merged_research: str) -> dic
 
         try:
             result = llm.invoke(messages)
+            from token_tracker import record_from_response
+            record_from_response("llama-3.1-8b-instant", result)
             raw = result.content if hasattr(result, "content") else str(result)
 
             # Parse JSON from response

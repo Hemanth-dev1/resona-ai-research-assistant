@@ -175,6 +175,8 @@ def _run_llm_call(system_prompt: str, human_prompt: str) -> str:
         ("human", human_prompt),
     ]
     result = llm.invoke(messages)
+    from token_tracker import record_from_response
+    record_from_response("llama-3.3-70b-versatile", result)
     return result.content if hasattr(result, "content") else str(result)
 
 

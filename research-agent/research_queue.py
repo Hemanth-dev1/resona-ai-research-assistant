@@ -38,7 +38,7 @@ def _search_web(query: str, max_results: int = 5) -> list[dict]:
         Empty list on error or no results.
     """
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         if not results:
@@ -117,6 +117,12 @@ def _synthesize_findings(
                 "using the web search results provided below.\n\n"
                 "Each source has an ID like [S1], [S2], etc. When you cite a fact, "
                 "reference the source ID inline like [S1] or [S2].\n\n"
+                "## CRITICAL: NO FABRICATION\n"
+                "You may ONLY cite from the sources listed below with their assigned "
+                "[S#] IDs. Do NOT invent source IDs, statistics, study names, journal "
+                "references, or data points that are not present in the provided sources. "
+                "If the sources don't answer a question, say so explicitly rather than "
+                "fabricating evidence.\n\n"
                 "Structure your response as:\n"
                 "- Key finding (with [S#] citations)\n"
                 "- Supporting evidence (with [S#] citations)\n"
@@ -143,6 +149,8 @@ def _synthesize_findings(
     for attempt in range(1, max_retries + 1):
         try:
             result = llm.invoke(messages)
+            from token_tracker import record_from_response
+            record_from_response("llama-3.1-8b-instant", result)
             findings_text = result.content if hasattr(result, "content") else str(result)
             return {
                 "findings": findings_text,

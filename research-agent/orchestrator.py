@@ -71,14 +71,37 @@ def run_pipeline(
         print(f"  📋 Planner: {len(sub_questions)} sub-questions generated")
 
         # Fallback: run a synchronous web search for CLI mode
+        # IMPORTANT: Format results with Source IDs (S1, S2...) and a Tracked
+        # Sources section so the Analyst never receives untracked text.
         print(f"  🔍 Running fallback web search for '{topic}'...")
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             with DDGS() as ddgs:
                 results = list(ddgs.text(topic, max_results=8))
                 if results:
-                    merged_research = "\n\n".join(
-                        f"- **{r['title']}**: {r['body']}" for r in results
+                    sections = []
+                    sources_lines = ["## Tracked Sources\n"]
+                    for i, r in enumerate(results):
+                        sid = f"S{i+1}"
+                        title = r.get("title", "Untitled")
+                        url = r.get("href", "")
+                        body = r.get("body", "")
+                        sections.append(
+                            f"## Research Finding: {title}\n"
+                            f"[{sid}] {title}\n"
+                            f"    URL: {url}\n"
+                            f"    {body[:500]}"
+                        )
+                        sources_lines.append(
+                            f"- **[{sid}]** {title}\n"
+                            f"  URL: {url}\n"
+                            f"  {body[:200]}\n"
+                        )
+                    merged_research = (
+                        f"# Parallel Research: {topic}\n\n"
+                        + "\n\n---\n\n".join(sections)
+                        + "\n\n---\n\n"
+                        + "\n".join(sources_lines)
                     )
                     print(f"  ✅ Web search: {len(results)} results, {len(merged_research)} chars")
                 else:
