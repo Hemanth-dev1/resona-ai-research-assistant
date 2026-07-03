@@ -553,7 +553,6 @@ def run_pipeline_graph(
     merged_research: str = "",
     memory_context: str = "",
     mode: str = "langchain",
-    max_critic_iterations: int = 3,
     strict_verification: bool = True,
 ) -> dict:
     """Run the research pipeline via LangGraph.
@@ -564,8 +563,12 @@ def run_pipeline_graph(
             If empty, the graph will run planner + LLM research internally.
         memory_context: Optional ChromaDB context.
         mode: 'langchain' for analysis+writing.
-        max_critic_iterations: Max critic loop iterations.
         strict_verification: If True, failed verification routes back to revise.
+
+    Note: max_critic_iterations and max_verification_iterations are now
+    hardcoded to 1 in the state dict.  All retry loops are capped at 1
+    attempt to prevent fabrication exposure and latency from runaway
+    loops on reports with no real source material.
 
     Returns:
         Final state dict with keys: report, critique_iterations, critique_score,

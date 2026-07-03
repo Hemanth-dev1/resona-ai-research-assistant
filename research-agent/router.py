@@ -38,7 +38,6 @@ def run_analysis(topic: str, merged_research: str) -> tuple:
         merged_research=merged_research,
         memory_context=os.getenv("MEMORY_CONTEXT", ""),
         mode="langchain",
-        max_critic_iterations=int(os.getenv("RESONA_MAX_CRITIC_ITERATIONS", "3")),
     )
     if result.get("error"):
         return (f"❌ Graph pipeline error: {result['error']}", 0, {})
