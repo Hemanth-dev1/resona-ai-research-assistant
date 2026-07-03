@@ -16,7 +16,7 @@ from typing import Optional
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-MAX_CONCURRENT = int(os.getenv("RESEARCH_MAX_CONCURRENT", "1"))
+MAX_CONCURRENT = int(os.getenv("RESEARCH_MAX_CONCURRENT", "2"))
 """Maximum number of concurrent research workers (default: 1, avoids Groq rate limits).
 
 Groq free tier has 6000 TPM limit for llama-3.1-8b-instant. Set to 2+ if using

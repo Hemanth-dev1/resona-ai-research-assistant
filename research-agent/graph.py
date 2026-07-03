@@ -66,45 +66,137 @@ def planner_node(state: ResearchState) -> dict:
     return {"plan": plan, "sub_questions": sub_questions}
 
 
+def research_retry_node(state: ResearchState) -> dict:
+    """When claim-verifier finds unsupported/fabricated claims, run targeted
+    web searches for those claim topics to find REAL sources — instead of
+    asking the Analyst to strip citations and write vague prose.
+
+    This node:
+    1. Extracts search queries from the unsupported claim text
+    2. Runs DuckDuckGo web searches for each query
+    3. Formats results as new Tracked Sources (with IDs continuing from
+       the existing max source ID)
+    4. Appends the new research to the existing merged_research
+    5. Clears the unsupported claims so the next analysis_writer pass
+       has fresh data
+
+    Runs synchronously (DuckDuckGo calls are blocking but fast).
+    """
+    topic = state["topic"]
+    merged = state["merged_research"]
+    unsupported = state.get("unsupported_claims", [])
+
+    if not unsupported:
+        return {"merged_research": merged, "unsupported_claims": []}
+
+    print(f"  🔍 Research Retry: Searching for sources on {len(unsupported)} unsupported claim(s)...")
+
+    # Determine the starting source ID (continue from existing max)
+    existing_ids = re.findall(r"\[S(\d+)\]", merged)
+    next_id = max((int(x) for x in existing_ids), default=0) + 1
+
+    new_sections: list[str] = []
+    new_sources: list[str] = []
+
+    for i, uc in enumerate(unsupported):
+        claim_text = uc.get("claim_text", "")[:200]
+        source_id = uc.get("source_id", "?")
+
+        # Generate a focused search query from the claim text
+        query = _claim_to_search_query(claim_text, topic)
+        print(f"     [{source_id}] Searching: {query}")
+
+        try:
+            from ddgs import DDGS
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=4))
+        except ImportError:
+            print(f"     ⚠️  duckduckgo_search not installed — skipping web search")
+            continue
+        except Exception as e:
+            print(f"     ⚠️  Search failed for '{query}': {e}")
+            continue
+
+        if not results:
+            print(f"     ⚠️  No results for '{query}'")
+            continue
+
+        # Format results with new source IDs
+        for j, r in enumerate(results):
+            sid = f"S{next_id}"
+            title = r.get("title", "Untitled")
+            url = r.get("href", "")
+            body = r.get("body", "")
+            new_sections.append(
+                f"## Retry Finding: {title}\n"
+                f"[{sid}] {title}\n"
+                f"    URL: {url}\n"
+                f"    {body[:500]}"
+            )
+            new_sources.append(
+                f"- **[{sid}]** {title}\n"
+                f"  URL: {url}\n"
+                f"  {body[:200]}\n"
+            )
+            next_id += 1
+
+    if new_sections:
+        # Build the retry research block
+        retry_block = (
+            "\n\n---\n"
+            "## Claim Retry Research\n"
+            "The following sources were retrieved through targeted searches "
+            "after claims in the previous report could not be verified.\n\n"
+            + "\n\n---\n\n".join(new_sections)
+            + "\n\n---\n\n"
+            + "## Tracked Sources (Retry)\n\n"
+            + "\n".join(new_sources)
+            + "\n---\n"
+        )
+        merged += retry_block
+        print(f"  ✅ Research Retry: Added {len(new_sections)} new sources for {len(unsupported)} claim(s)")
+    else:
+        print(f"  ⚠️  Research Retry: No new sources found — proceeding with existing research")
+        # Append a note so the Analyst knows it tried
+        merged += (
+            "\n\n---\n"
+            "## Claim Retry Research\n"
+            "No additional sources could be retrieved for the following claims. "
+            "If you cannot support them, set has_sufficient_evidence=false and "
+            "explain in gap_reason what specific information is missing.\n"
+            "---\n"
+        )
+
+    return {"merged_research": merged, "unsupported_claims": []}
+
+
+def _claim_to_search_query(claim_text: str, topic: str) -> str:
+    """Extract a focused search query from an unsupported claim.
+
+    Strips citation tags, removes hedging language, and keeps key
+    noun phrases.  Falls back to topic + first few keywords.
+    """
+    # Remove [S#] tags
+    text = re.sub(r"\[S\d+\]", "", claim_text)
+    # Remove URLs
+    text = re.sub(r"https?://\S+", "", text)
+    # Remove common hedge/filler phrases
+    text = re.sub(r"\b(it is|the|a|an|this|that|these|those)\b", "", text, flags=re.IGNORECASE)
+    # Take first 8 significant words
+    words = [w for w in text.split() if len(w) > 2][:8]
+    if not words:
+        return topic
+    return " ".join(words)
+
+
 def analysis_writer_node(state: ResearchState) -> dict:
     """Analyze merged research and write the report.
 
     Uses the capable model via LangChain chain.
     (Only 'langchain' mode is supported inside the graph.)
-
-    If this is a retry from claim_verifier with unsupported claims, the
-    feedback is injected into the merged_research so the analyst/writer
-    knows what specific claims to fix.
     """
     topic = state["topic"]
     merged = state["merged_research"]
-
-    # ── Inject claim verifier feedback if this is a retry ───────────────
-    unsupported = state.get("unsupported_claims", [])
-    if unsupported:
-        feedback = (
-            "\n\n---\n"
-            "## Claim Verification Feedback\n"
-            "The following claims were NOT supported by their cited sources. "
-            "REWRITE or REMOVE them. Either find sources that actually support "
-            "the claim, or remove the claim entirely:\n\n"
-        )
-        for uc in unsupported:
-            sid = uc.get("source_id", "?")
-            claim = uc.get("claim_text", "")[:200]
-            reason = uc.get("reason", "")
-            feedback += (
-                f"- **[{sid}]** Claim: \"{claim}\"\n"
-                f"  Issue: {reason}\n\n"
-            )
-        feedback += (
-            "Remember: every claim must be traceable to its cited source. "
-            "If a source doesn't support the claim attached to it, either "
-            "find a different source or remove the claim.\n"
-            "---\n"
-        )
-        merged += feedback
-        print(f"  🔄 Graph: Injected {len(unsupported)} unsupported claim(s) as feedback")
 
     if not merged or len(merged) < 50:
         # No external research — mark clearly rather than letting LLM fabricate
@@ -205,8 +297,9 @@ def claim_verifier_node(state: ResearchState) -> dict:
 
     Parses [S#] tags from the report, extracts the surrounding claim text,
     and sends each claim+source pair to a fast LLM for verification.
-    If ANY claims are unsupported, routes back to analysis_writer with the
-    specific unsupported claim + reason.
+    If ANY claims are unsupported, routes to research_retry_node which runs
+    targeted web searches for those claims to find REAL sources — instead of
+    asking the Analyst to strip citations and write vague prose.
     """
     topic = state["topic"]
     report = state["report"]
@@ -242,8 +335,13 @@ def claim_verifier_node(state: ResearchState) -> dict:
 def route_after_claim_verifier(state: ResearchState) -> str:
     """Decide next step after claim verification.
 
-    If claims are unsupported and we haven't hit max iterations, route back
-    to analysis_writer with specific feedback. Otherwise proceed to critic.
+    If claims are unsupported and we haven't hit max iterations, route to
+    research_retry_node which runs targeted web searches for the unsupported
+    claims to find REAL sources (instead of asking the Analyst to strip
+    citations and write vaguely).
+
+    After max iterations, proceed to critic (the HARD GATE in
+    run_pipeline_graph() will append the "Could Not Verify" warning).
     """
     passed = state.get("claim_verification_passed", True)
     iterations = state.get("claim_verifier_iterations", 0)
@@ -251,8 +349,8 @@ def route_after_claim_verifier(state: ResearchState) -> str:
     unsupported = state.get("unsupported_claims", [])
 
     if not passed and iterations < max_iter and unsupported:
-        print(f"  🔄 Graph: Routing back to analysis_writer with {len(unsupported)} unsupported claim(s)")
-        return "analysis_writer"
+        print(f"  🔄 Graph: Routing to research_retry for {len(unsupported)} unsupported claim(s)")
+        return "research_retry"
 
     if not passed:
         print(f"  ⚠️  Graph: Max claim verifier iterations ({max_iter}) reached — proceeding with {len(unsupported)} unresolved claim(s)")
@@ -369,6 +467,7 @@ def build_research_graph() -> StateGraph:
     # Add nodes
     builder.add_node("planner", planner_node)
     builder.add_node("analysis_writer", analysis_writer_node)
+    builder.add_node("research_retry", research_retry_node)
     builder.add_node("claim_verifier", claim_verifier_node)
     builder.add_node("critic", critic_node)
     builder.add_node("revise", revise_node)
@@ -390,15 +489,19 @@ def build_research_graph() -> StateGraph:
     # analysis_writer → claim_verifier (Step 5: cheap claim check BEFORE critic)
     builder.add_edge("analysis_writer", "claim_verifier")
 
-    # Conditional: claim_verifier → analysis_writer (retry) or critic (proceed)
+    # Conditional: claim_verifier → research_retry (search for unsupported claims)
+    #               or critic (proceed if all claims verified)
     builder.add_conditional_edges(
         "claim_verifier",
         route_after_claim_verifier,
         {
-            "analysis_writer": "analysis_writer",
+            "research_retry": "research_retry",
             "critic": "critic",
         },
     )
+
+    # research_retry → analysis_writer (re-analyze with new sources)
+    builder.add_edge("research_retry", "analysis_writer")
 
     # Conditional: critic → revise or verifier (via END)
     builder.add_conditional_edges(

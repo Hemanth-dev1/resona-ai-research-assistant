@@ -23,6 +23,53 @@ from langsmith import traceable
 from chain.prompts import PLANNER_PROMPT, RESEARCHER_PROMPT, ANALYST_PROMPT, WRITER_PROMPT
 
 
+# ── Diagnostic safety filter ──────────────────────────────────────────────
+
+_ERROR_DIAGNOSTIC_PATTERNS: list[re.Pattern] = [
+    re.compile(r'^Removing extra data at line'),
+    re.compile(r'^Extra data: line'),
+    re.compile(r'^Traceback \(most recent call last\):'),
+    re.compile(r'^  File ".*", line \d+, in '),
+    re.compile(r'^\w+Error: .+'),
+    re.compile(r'^\w+Warning: .+'),
+]
+
+
+def _strip_error_diagnostics(text: str) -> str:
+    """Strip lines that look like Python error diagnostics from LLM output.
+
+    Prevents simulated or echoed error messages (e.g. "Removing extra data
+    at line 37") from leaking into the report body.  These can appear when
+    the LLM hallucinates a diagnostic echo or when a prior processing step
+    injects error text into the LLM's context.
+
+    Args:
+        text: The raw LLM response text.
+
+    Returns:
+        Cleaned text with diagnostic lines removed.
+    """
+    lines = text.split("\n")
+    cleaned: list[str] = []
+    in_traceback = False
+    for line in lines:
+        stripped = line.strip()
+        # Skip Python traceback blocks
+        if stripped.startswith("Traceback (most recent call last):"):
+            in_traceback = True
+            continue
+        if in_traceback:
+            # Skip continuation lines (indented) and the final error line
+            if stripped.startswith("  ") or re.match(r"^\w+(Error|Warning|Exception):", stripped):
+                continue
+            in_traceback = False
+        # Skip known diagnostic patterns
+        if any(p.match(stripped) for p in _ERROR_DIAGNOSTIC_PATTERNS):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
 @lru_cache(maxsize=1)
 def _get_llms() -> tuple:
     """Get cached fast and capable LLM instances.
@@ -174,11 +221,12 @@ def run_analysis_writing(topic: str, merged_research: str) -> dict:
         print(f"  ⚠️  Could not parse structured analyst output: {e}")
         analysis_text = raw_analysis  # Fall back to raw string
 
+    # ── Safety filter: strip any Python error diagnostics from output ─────
+    analysis_text = _strip_error_diagnostics(analysis_text)
+
     # ── Extract structured source data from merged_research ─────────────────
     sources_data = _extract_sources_from_research(merged_research)
     print(f"  📚 Extracted {len(sources_data)} sources from research for writer")
-
-    time.sleep(1)  # 🐌 Rate-limit spacer
 
     # ── Build writer input ─────────────────────────────────────────────────
     writer_input = {
@@ -297,8 +345,6 @@ def run_langchain(topic: str, memory_context: str = "") -> dict:
     sub_questions_str = _format_sub_questions(plan) if plan else ""
     print(f"  ✅ Planner generated {len(plan.get('sub_questions', [])) if plan else 0} sub-questions")
 
-    time.sleep(1)
-
     # Step 1: Research (sequential - used when run_parallel_research not available)
     print(f"  🔍 LangChain: Researching '{topic}'...")
     from token_tracker import track_chain_invoke
@@ -308,8 +354,6 @@ def run_langchain(topic: str, memory_context: str = "") -> dict:
         "memory_context": memory_context or "No prior context available.",
         "sub_questions": sub_questions_str,
     })
-
-    time.sleep(2)
 
     # Step 2+3: Analysis + Writing
     result = run_analysis_writing(topic, research)
@@ -438,73 +482,115 @@ def run_claim_verification(topic: str, report: str, merged_research: str) -> dic
             "summary": "No citations found in report to verify.",
         }
 
-    print(f"  🔍 Claim Verifier: Checking {len(claim_pairs)} claim+source pairs...")
+    print(f"  🔍 Claim Verifier: Checking {len(claim_pairs)} claim+source pairs in 1 batch call...")
 
-    # ── Step 3: Check each claim against its source with a fast LLM ─────────
+    # ── Step 3: Batch-check ALL claims against their sources in ONE LLM call ─
+    # Previously this was N individual calls (one per claim). Batching into a
+    # single call reduces latency dramatically since the model processes all
+    # pairs in one forward pass.
     unsupported: list[dict] = []
     from llm_config import get_fast_llm
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    llm = get_fast_llm(temperature=0.0, max_tokens=512)
+    llm = get_fast_llm(temperature=0.0, max_tokens=2048)
 
+    # Build a single batch prompt with all claim+source pairs
+    batch_entries = []
     for i, pair in enumerate(claim_pairs):
-        claim_text = pair["claim"]
-        source_id = pair["source_id"]
-        source_snippet = pair["snippet"]
-        source_url = pair.get("url", "")
+        batch_entries.append(
+            f"--- Claim {i+1} ---\n"
+            f"Source [{pair['source_id']}] snippet:\n{pair['snippet'][:800]}\n\n"
+            f"Claim: {pair['claim']}\n"
+            f"URL: {pair.get('url', '')}\n"
+        )
 
-        messages = [
-            SystemMessage(
-                content=(
-                    "You are a strict fact-checker. Your job is to determine whether a claim "
-                    "is actually supported by the provided source text.\n\n"
-                    "Answer in strict JSON format:\n"
-                    "{\"supported\": true/false, \"reason\": \"Brief explanation of your decision.\"}\n\n"
-                    "Be strict — if the source doesn't explicitly support the claim, "
-                    "mark it as unsupported. Do not guess or infer."
-                )
-            ),
-            HumanMessage(
-                content=(
-                    f"Source [{source_id}] snippet:\n{source_snippet[:1000]}\n\n"
-                    f"Claim from report:\n{claim_text}\n\n"
-                    f"Does this source snippet actually support this claim? "
-                    f"Answer as JSON: {{\"supported\": bool, \"reason\": \"string\"}}"
-                )
-            ),
-        ]
+    batch_prompt = (
+        "You are a strict fact-checker. For EACH claim+source pair below, "
+        "determine whether the claim is actually supported by the provided source text.\n\n"
+        "Be strict — if the source doesn't explicitly support the claim, "
+        "mark it as unsupported. Do not guess or infer.\n\n"
+        "Return a JSON object with an array 'results' where each entry has: "
+        "index (0-based), supported (boolean), reason (string).\n"
+        "Example: {{\"results\": [{{\"index\": 0, \"supported\": true, \"reason\": \"...\"}}, ...]}}\n\n"
+        + "\n\n".join(batch_entries)
+    )
 
-        try:
-            result = llm.invoke(messages)
-            from token_tracker import record_from_response
-            record_from_response("llama-3.1-8b-instant", result)
-            raw = result.content if hasattr(result, "content") else str(result)
+    try:
+        result = llm.invoke([
+            SystemMessage(content="You are a strict fact-checker. Return ONLY valid JSON."),
+            HumanMessage(content=batch_prompt),
+        ])
+        from token_tracker import record_from_response
+        record_from_response("llama-3.1-8b-instant", result)
+        raw = result.content if hasattr(result, "content") else str(result)
 
-            # Parse JSON from response
-            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-            if json_match:
-                verdict = json.loads(json_match.group())
-            else:
-                verdict = json.loads(raw)
+        # Parse the batch JSON response
+        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if json_match:
+            batch_result = json.loads(json_match.group())
+        else:
+            batch_result = json.loads(raw)
 
+        verdicts = batch_result.get("results", [])
+        if not verdicts:
+            # Fallback: try top-level keys
+            verdicts = [{"index": k, "supported": v} for k, v in batch_result.items() if isinstance(v, bool)]
+
+        for verdict in verdicts:
+            idx = verdict.get("index")
+            if idx is None:
+                continue
+            try:
+                idx = int(idx)
+            except (ValueError, TypeError):
+                continue
+            if idx < 0 or idx >= len(claim_pairs):
+                continue
+
+            pair = claim_pairs[idx]
             supported = verdict.get("supported", False)
             reason = verdict.get("reason", "No reason given.")
 
             if not supported:
                 unsupported.append({
-                    "claim_text": claim_text,
-                    "source_id": source_id,
-                    "source_url": source_url,
+                    "claim_text": pair["claim"],
+                    "source_id": pair["source_id"],
+                    "source_url": pair.get("url", ""),
                     "reason": reason,
                 })
-                print(f"  ❌ Claim {i+1}/{len(claim_pairs)}: NOT supported by {source_id} — {reason[:80]}")
+                print(f"  ❌ Claim {idx+1}/{len(claim_pairs)}: NOT supported by {pair['source_id']} — {reason[:80]}")
             else:
-                print(f"  ✅ Claim {i+1}/{len(claim_pairs)}: supported by {source_id}")
+                print(f"  ✅ Claim {idx+1}/{len(claim_pairs)}: supported by {pair['source_id']}")
 
-        except Exception as e:
-            print(f"  ⚠️  Claim {i+1}/{len(claim_pairs)} verification error: {e}")
-            # Don't fail on LLM error — treat as pass-through
-            continue
+    except Exception as e:
+        print(f"  ⚠️  Batch claim verification error ({e}) — falling back to per-claim check")
+        # Fallback: individual calls
+        for i, pair in enumerate(claim_pairs):
+            try:
+                single_result = llm.invoke([
+                    SystemMessage(content="You are a strict fact-checker. Answer in JSON."),
+                    HumanMessage(
+                        content=(
+                            f"Source [{pair['source_id']}] snippet:\n{pair['snippet'][:1000]}\n\n"
+                            f"Claim:\n{pair['claim']}\n\n"
+                            f"Does this source support the claim? "
+                            f"Answer as JSON: {{\"supported\": bool, \"reason\": \"string\"}}"
+                        )
+                    ),
+                ])
+                record_from_response("llama-3.1-8b-instant", single_result)
+                raw2 = single_result.content if hasattr(single_result, "content") else str(single_result)
+                jm = re.search(r"\{.*\}", raw2, re.DOTALL)
+                verdict2 = json.loads(jm.group()) if jm else json.loads(raw2)
+                if not verdict2.get("supported", False):
+                    unsupported.append({
+                        "claim_text": pair["claim"],
+                        "source_id": pair["source_id"],
+                        "source_url": pair.get("url", ""),
+                        "reason": verdict2.get("reason", "Unsupported"),
+                    })
+            except Exception:
+                continue
 
     passed = len(unsupported) == 0
     summary = (
