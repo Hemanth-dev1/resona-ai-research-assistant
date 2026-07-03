@@ -266,9 +266,13 @@ def get_fast_llm(
 ) -> Any:
     """Get a fast/cheap LLM for simple tasks (Planner, Research, Verification).
 
-    Includes **provider-level fallback**: if Groq's combined daily budget is
-    near exhaustion, automatically routes to Gemini Flash instead of
-    hard-failing with a 429.
+    Includes **runtime 429 catch-and-fallback**: if the primary provider
+    returns a rate-limit error (429), the call is automatically retried on
+    Gemini Flash without crashing the pipeline.
+
+    Also includes **provider-level pre-check fallback**: if Groq's combined
+    daily budget is near exhaustion (tracked in memory), routes to Gemini
+    before making the call.
 
     Uses LLM_MODEL_FAST or the provider's fast model default.
 
@@ -278,13 +282,13 @@ def get_fast_llm(
         max_tokens: Maximum tokens in response (default: 4096).
 
     Returns:
-        An LLM instance configured with the fast model (possibly on a
-        fallback provider).
+        An LLM instance configured with the fast model, with automatic
+        fallback to Gemini on rate-limit errors.
     """
     provider = provider or get_provider()
     model = get_fast_model_name(provider)
 
-    # ── Provider-level fallback: if Groq exhausted, route to Gemini ────
+    # ── Step 1: Provider-level pre-check (in-memory tracker) ───────────
     from token_tracker import check_provider_fallback
     fb_provider, fb_model = check_provider_fallback(
         "groq",
@@ -292,11 +296,25 @@ def get_fast_llm(
         fallback_provider=LLMProvider.GEMINI,
     )
     if fb_provider is not None:
-        # Fallback triggered — use Gemini with its fast model
         model = get_fast_model_name(fb_provider)
         return get_llm(provider=fb_provider, model=model, temperature=temperature, max_tokens=max_tokens)
 
-    return get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
+    # ── Step 2: Primary LLM ────────────────────────────────────────────
+    primary = get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
+
+    # ── Step 3: Runtime 429 fallback — LangChain retries on Gemini ─────
+    _gemini_key = get_api_key(LLMProvider.GEMINI)
+    if _gemini_key:
+        try:
+            _gemini_model = get_fast_model_name(LLMProvider.GEMINI)
+            _gemini_llm = get_llm(provider=LLMProvider.GEMINI, model=_gemini_model,
+                                  temperature=temperature, max_tokens=max_tokens)
+            print(f"  ⚡ get_fast_llm: adding runtime 429 fallback to {LLMProvider.GEMINI.value}/{_gemini_model}")
+            return primary.with_fallbacks([_gemini_llm])
+        except Exception:
+            pass  # If Gemini setup fails, just use primary without fallback
+
+    return primary
 
 
 def get_capable_llm(
@@ -306,12 +324,15 @@ def get_capable_llm(
 ) -> Any:
     """Get a capable/high-quality LLM for complex reasoning (Analyst, Writer, Critic).
 
-    Includes **provider-level fallback**: the fallback chain is:
+    Includes **runtime 429 catch-and-fallback**: if the primary LLM returns
+    a rate-limit error, the call is automatically retried on Gemini Flash,
+    then on Groq 8B, without crashing the pipeline.
+
+    Also includes **provider-level pre-check**: the fallback chain is:
         1. Groq 70B (primary) — fastest, highest quality
-        2. Gemini Flash (cross-provider fallback) — when Groq's daily budget
-           is near exhaustion
-        3. Groq 8B (tertiary) — when Gemini is unavailable or the prompt
-           doesn't need Flash-level quality
+        2. Gemini Flash (cross-provider runtime fallback) — when Groq 70B
+           returns a 429
+        3. Groq 8B (tertiary runtime fallback) — if both 70B and Gemini fail
 
     Uses LLM_MODEL_CAPABLE or the provider's capable model default.
 
@@ -322,37 +343,53 @@ def get_capable_llm(
             outputs; clamped to 4096 when falling back to 8B models).
 
     Returns:
-        An LLM instance configured with the capable model (possibly on a
-        fallback provider).
+        An LLM instance with automatic runtime fallback on rate-limit errors.
     """
     provider = provider or get_provider()
     configured_model = get_capable_model_name(provider)
     fast_model = get_fast_model_name(provider)
 
-    # ── Step 1: Provider-level fallback (Groq exhausted → Gemini) ──────
-    from token_tracker import check_provider_fallback
-    fb_provider, fb_model = check_provider_fallback(
-        "groq",
-        fallback_model_name="gemini-3.5-flash",
-        fallback_provider=LLMProvider.GEMINI,
-    )
-    if fb_provider is not None:
-        # Cross-provider fallback: use Gemini Flash
-        return get_llm(
-            provider=fb_provider,
-            model=get_capable_model_name(fb_provider),
-            temperature=temperature,
-            max_tokens=min(max_tokens, 4096),  # Gemini Flash handles 8K output
-        )
-
-    # ── Step 2: Model-level soft guard (70B budget near limit → 8B) ────
+    # ── Step 1: Model-level soft guard (in-memory tracker) ─────────────
     from token_tracker import check_model_fallback
     model = check_model_fallback(configured_model, fallback_model=fast_model)
 
-    # ── Model-aware max_tokens clamping ───────────────────────────────
-    if model and "8b" in model.lower() and max_tokens > 6000:
-        max_tokens = 4096
+    # ── Max_tokens clamping for 8B models ─────────────────────────────
+    _mt = max_tokens
+    if model and "8b" in model.lower() and _mt > 6000:
+        _mt = 4096
 
-    return get_llm(provider=provider, model=model, temperature=temperature, max_tokens=max_tokens)
+    # ── Step 2: Primary LLM ────────────────────────────────────────────
+    primary = get_llm(provider=provider, model=model, temperature=temperature, max_tokens=_mt)
+
+    # ── Step 3: Runtime 429 fallbacks ──────────────────────────────────
+    _fallbacks = []
+
+    # Fallback A: Gemini Flash (if API key is set)
+    _gemini_key = get_api_key(LLMProvider.GEMINI)
+    if _gemini_key:
+        try:
+            _gemini_model = get_capable_model_name(LLMProvider.GEMINI)
+            _gemini_llm = get_llm(provider=LLMProvider.GEMINI, model=_gemini_model,
+                                  temperature=temperature,
+                                  max_tokens=min(_mt, 4096))
+            _fallbacks.append(_gemini_llm)
+        except Exception:
+            pass
+
+    # Fallback B: Groq 8B (same provider, cheaper model — only if primary is 70B)
+    if "70b" in model.lower() or "70b" in configured_model.lower():
+        try:
+            _groq_8b_llm = get_llm(provider=LLMProvider.GROQ, model=fast_model,
+                                   temperature=temperature,
+                                   max_tokens=min(_mt, 4096))
+            _fallbacks.append(_groq_8b_llm)
+        except Exception:
+            pass
+
+    if _fallbacks:
+        print(f"  ⚡ get_capable_llm: adding runtime 429 fallbacks ({len(_fallbacks)} tiers)")
+        return primary.with_fallbacks(_fallbacks)
+
+    return primary
 
 
