@@ -340,8 +340,11 @@ def route_after_claim_verifier(state: ResearchState) -> str:
     claims to find REAL sources (instead of asking the Analyst to strip
     citations and write vaguely).
 
-    After max iterations, proceed to critic (the HARD GATE in
-    run_pipeline_graph() will append the "Could Not Verify" warning).
+    After max iterations (one retry cycle), route DIRECTLY to END so the
+    HARD GATE in run_pipeline_graph() appends the "Could Not Verify" warning.
+    We skip critic + verifier entirely because the report is known to have
+    fabricated citations — running critic/verifier on it wastes time and
+    tokens, and the user gets the partial report faster.
     """
     passed = state.get("claim_verification_passed", True)
     iterations = state.get("claim_verifier_iterations", 0)
@@ -349,15 +352,18 @@ def route_after_claim_verifier(state: ResearchState) -> str:
     unsupported = state.get("unsupported_claims", [])
 
     if not passed and iterations < max_iter and unsupported:
-        print(f"  🔄 Graph: Routing to research_retry for {len(unsupported)} unsupported claim(s)")
+        print(f"  🔄 Graph: Routing to research_retry for {len(unsupported)} unsupported claim(s) (attempt {iterations}/{max_iter})")
         return "research_retry"
 
     if not passed:
-        print(f"  ⚠️  Graph: Max claim verifier iterations ({max_iter}) reached — proceeding with {len(unsupported)} unresolved claim(s)")
+        print(f"  ⚠️  Graph: Max claim verifier iterations ({max_iter}) reached — {len(unsupported)} unresolved claim(s). Routing directly to END (skipping critic+verifier)")
     else:
         print(f"  ✅ Graph: All cited claims verified — proceeding to critic")
+        return "critic"
 
-    return "critic"
+    # ── After retry exhausted: skip critic+verifier entirely, go straight to END
+    #    so the HARD GATE in run_pipeline_graph() appends the warning and returns.
+    return END
 
 
 # ── Entry Router ───────────────────────────────────────────────────────────
@@ -491,12 +497,14 @@ def build_research_graph() -> StateGraph:
 
     # Conditional: claim_verifier → research_retry (search for unsupported claims)
     #               or critic (proceed if all claims verified)
+    #               or END (max retries exhausted — Could-Not-Verify)
     builder.add_conditional_edges(
         "claim_verifier",
         route_after_claim_verifier,
         {
             "research_retry": "research_retry",
             "critic": "critic",
+            END: END,
         },
     )
 
@@ -577,13 +585,13 @@ def run_pipeline_graph(
         "critique_score": None,
         "critique_passed": None,
         "critique_iterations": 0,
-        "max_critic_iterations": max_critic_iterations,
+        "max_critic_iterations": 1,
         "last_critique": None,
         "verification_passed": None,
         "verification_summary": None,
         "verification_findings": [],
         "verification_iterations": 0,
-        "max_verification_iterations": 2,
+        "max_verification_iterations": 1,
         "total_claims_checked": 0,
         "strict_verification": strict_verification,
         "claim_verification_passed": None,

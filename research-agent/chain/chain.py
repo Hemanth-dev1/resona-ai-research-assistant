@@ -116,17 +116,24 @@ def run_planner(topic: str) -> Optional[dict]:
       - rationale: Why this question matters
       - priority: Priority order (1 = highest)
 
+    If the LLM fails to return valid JSON (empty response, malformed),
+    falls back to generating sub-questions heuristically from the topic
+    string — splitting on commas/conjunctions — so the pipeline always
+    has at least some structure to search.
+
     Args:
         topic: The research topic to plan.
 
     Returns:
         Dict with 'topic', 'sub_questions', 'suggested_approach' keys,
-        or None if planning fails.
+        or a fallback plan if LLM fails.
     """
     try:
         planner_chain, _, _, _ = _get_chains()
         from token_tracker import track_chain_invoke
         raw = track_chain_invoke("llama-3.1-8b-instant", planner_chain, {"topic": topic})
+        if not raw or not raw.strip():
+            raise ValueError("Empty planner response")
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
         if json_match:
             plan = json.loads(json_match.group())
@@ -152,8 +159,31 @@ def run_planner(topic: str) -> Optional[dict]:
             plan["sub_questions"] = normalized
         return plan
     except Exception as e:
-        print(f"  ⚠️  Planner failed (falling back to direct research): {e}")
-        return None
+        print(f"  ⚠️  Planner LLM failed ({e}) — generating fallback sub-questions from topic")
+        # ── Generate fallback sub-questions heuristically ─────────────────
+        # Split topic on commas, 'and', 'vs', 'versus', 'latest', 'trend'
+        parts = re.split(r"\s*[,;]\s*|\s+and\s+|\s+vs?\.?\s+|\s+latest\s+|\s+trends?\s+", topic, flags=re.IGNORECASE)
+        parts = [p.strip() for p in parts if p.strip() and len(p.strip()) > 3]
+        if len(parts) < 2:
+            # Fallback: generate 3 generic sub-questions from the topic
+            parts = [
+                f"{topic} latest developments and breakthroughs",
+                f"{topic} key companies and market leaders",
+                f"{topic} challenges and future outlook",
+            ]
+        fallback_questions = []
+        for i, part in enumerate(parts[:5]):
+            fallback_questions.append({
+                "question": f"What are the latest developments in {part}?",
+                "search_query": f"{part} 2025 2026",
+                "rationale": f"Cover the {part} aspect of the topic.",
+                "priority": i + 1,
+            })
+        return {
+            "topic": topic,
+            "sub_questions": fallback_questions,
+            "suggested_approach": f"Research {topic} across {min(len(parts), 5)} sub-topics.",
+        }
 
 
 # ── Analysis + Writing (after parallel research) ───────────────────────────
@@ -484,113 +514,137 @@ def run_claim_verification(topic: str, report: str, merged_research: str) -> dic
 
     print(f"  🔍 Claim Verifier: Checking {len(claim_pairs)} claim+source pairs in 1 batch call...")
 
-    # ── Step 3: Batch-check ALL claims against their sources in ONE LLM call ─
+    # ── Step 3: HARD pre-check — reject claims where source snippet is ─────
+    #    literally "not available" before even calling the LLM.  This is a
+    #    deterministic gate: if the source ID doesn't exist in the Tracked
+    #    Sources section, the claim is fabricated regardless of what the LLM
+    #    might guess.
+    unsupported: list[dict] = []
+    pairs_to_check: list[dict] = []
+    for pair in claim_pairs:
+        snippet = pair.get("snippet", "")
+        if "not available" in snippet.lower() and "research material" in snippet.lower():
+            unsupported.append({
+                "claim_text": pair["claim"],
+                "source_id": pair["source_id"],
+                "source_url": pair.get("url", ""),
+                "reason": f"Source {pair['source_id']} does not exist in the research material. "
+                          f"The claim references a fabricated source ID.",
+            })
+            print(f"  ❌ Claim {len(unsupported)}: HARD REJECT — {pair['source_id']} not in Tracked Sources")
+        else:
+            pairs_to_check.append(pair)
+
+    if unsupported:
+        print(f"  🚫 HARD GATE: {len(unsupported)} claim(s) reference non-existent source IDs")
+
+    # ── Step 4: Batch-check remaining claims against their sources in ONE LLM call ─
     # Previously this was N individual calls (one per claim). Batching into a
     # single call reduces latency dramatically since the model processes all
     # pairs in one forward pass.
-    unsupported: list[dict] = []
-    from llm_config import get_fast_llm
-    from langchain_core.messages import HumanMessage, SystemMessage
+    if pairs_to_check:
+        from llm_config import get_fast_llm
+        from langchain_core.messages import HumanMessage, SystemMessage
 
-    llm = get_fast_llm(temperature=0.0, max_tokens=2048)
+        llm = get_fast_llm(temperature=0.0, max_tokens=2048)
 
-    # Build a single batch prompt with all claim+source pairs
-    batch_entries = []
-    for i, pair in enumerate(claim_pairs):
-        batch_entries.append(
-            f"--- Claim {i+1} ---\n"
-            f"Source [{pair['source_id']}] snippet:\n{pair['snippet'][:800]}\n\n"
-            f"Claim: {pair['claim']}\n"
-            f"URL: {pair.get('url', '')}\n"
+        # Build a single batch prompt with all claim+source pairs
+        batch_entries = []
+        for i, pair in enumerate(pairs_to_check):
+            batch_entries.append(
+                f"--- Claim {i+1} ---\n"
+                f"Source [{pair['source_id']}] snippet:\n{pair['snippet'][:800]}\n\n"
+                f"Claim: {pair['claim']}\n"
+                f"URL: {pair.get('url', '')}\n"
+            )
+
+        batch_prompt = (
+            "You are a strict fact-checker. For EACH claim+source pair below, "
+            "determine whether the claim is actually supported by the provided source text.\n\n"
+            "Be strict — if the source doesn't explicitly support the claim, "
+            "mark it as unsupported. Do not guess or infer.\n\n"
+            "Return a JSON object with an array 'results' where each entry has: "
+            "index (0-based), supported (boolean), reason (string).\n"
+            "Example: {{\"results\": [{{\"index\": 0, \"supported\": true, \"reason\": \"...\"}}, ...]}}\n\n"
+            + "\n\n".join(batch_entries)
         )
 
-    batch_prompt = (
-        "You are a strict fact-checker. For EACH claim+source pair below, "
-        "determine whether the claim is actually supported by the provided source text.\n\n"
-        "Be strict — if the source doesn't explicitly support the claim, "
-        "mark it as unsupported. Do not guess or infer.\n\n"
-        "Return a JSON object with an array 'results' where each entry has: "
-        "index (0-based), supported (boolean), reason (string).\n"
-        "Example: {{\"results\": [{{\"index\": 0, \"supported\": true, \"reason\": \"...\"}}, ...]}}\n\n"
-        + "\n\n".join(batch_entries)
-    )
+        try:
+            result = llm.invoke([
+                SystemMessage(content="You are a strict fact-checker. Return ONLY valid JSON."),
+                HumanMessage(content=batch_prompt),
+            ])
+            from token_tracker import record_from_response
+            record_from_response("llama-3.1-8b-instant", result)
+            raw = result.content if hasattr(result, "content") else str(result)
 
-    try:
-        result = llm.invoke([
-            SystemMessage(content="You are a strict fact-checker. Return ONLY valid JSON."),
-            HumanMessage(content=batch_prompt),
-        ])
-        from token_tracker import record_from_response
-        record_from_response("llama-3.1-8b-instant", result)
-        raw = result.content if hasattr(result, "content") else str(result)
-
-        # Parse the batch JSON response
-        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if json_match:
-            batch_result = json.loads(json_match.group())
-        else:
-            batch_result = json.loads(raw)
-
-        verdicts = batch_result.get("results", [])
-        if not verdicts:
-            # Fallback: try top-level keys
-            verdicts = [{"index": k, "supported": v} for k, v in batch_result.items() if isinstance(v, bool)]
-
-        for verdict in verdicts:
-            idx = verdict.get("index")
-            if idx is None:
-                continue
-            try:
-                idx = int(idx)
-            except (ValueError, TypeError):
-                continue
-            if idx < 0 or idx >= len(claim_pairs):
-                continue
-
-            pair = claim_pairs[idx]
-            supported = verdict.get("supported", False)
-            reason = verdict.get("reason", "No reason given.")
-
-            if not supported:
-                unsupported.append({
-                    "claim_text": pair["claim"],
-                    "source_id": pair["source_id"],
-                    "source_url": pair.get("url", ""),
-                    "reason": reason,
-                })
-                print(f"  ❌ Claim {idx+1}/{len(claim_pairs)}: NOT supported by {pair['source_id']} — {reason[:80]}")
+            # Parse the batch JSON response
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if json_match:
+                batch_result = json.loads(json_match.group())
             else:
-                print(f"  ✅ Claim {idx+1}/{len(claim_pairs)}: supported by {pair['source_id']}")
+                batch_result = json.loads(raw)
 
-    except Exception as e:
-        print(f"  ⚠️  Batch claim verification error ({e}) — falling back to per-claim check")
-        # Fallback: individual calls
-        for i, pair in enumerate(claim_pairs):
-            try:
-                single_result = llm.invoke([
-                    SystemMessage(content="You are a strict fact-checker. Answer in JSON."),
-                    HumanMessage(
-                        content=(
-                            f"Source [{pair['source_id']}] snippet:\n{pair['snippet'][:1000]}\n\n"
-                            f"Claim:\n{pair['claim']}\n\n"
-                            f"Does this source support the claim? "
-                            f"Answer as JSON: {{\"supported\": bool, \"reason\": \"string\"}}"
-                        )
-                    ),
-                ])
-                record_from_response("llama-3.1-8b-instant", single_result)
-                raw2 = single_result.content if hasattr(single_result, "content") else str(single_result)
-                jm = re.search(r"\{.*\}", raw2, re.DOTALL)
-                verdict2 = json.loads(jm.group()) if jm else json.loads(raw2)
-                if not verdict2.get("supported", False):
+            verdicts = batch_result.get("results", [])
+            if not verdicts:
+                # Fallback: try top-level keys
+                verdicts = [{"index": k, "supported": v} for k, v in batch_result.items() if isinstance(v, bool)]
+
+            for verdict in verdicts:
+                idx = verdict.get("index")
+                if idx is None:
+                    continue
+                try:
+                    idx = int(idx)
+                except (ValueError, TypeError):
+                    continue
+                if idx < 0 or idx >= len(pairs_to_check):
+                    continue
+
+                pair = pairs_to_check[idx]
+                supported = verdict.get("supported", False)
+                reason = verdict.get("reason", "No reason given.")
+
+                if not supported:
                     unsupported.append({
                         "claim_text": pair["claim"],
                         "source_id": pair["source_id"],
                         "source_url": pair.get("url", ""),
-                        "reason": verdict2.get("reason", "Unsupported"),
+                        "reason": reason,
                     })
-            except Exception:
-                continue
+                    print(f"  ❌ Claim {idx+1}/{len(pairs_to_check)}: NOT supported by {pair['source_id']} — {reason[:80]}")
+                else:
+                    print(f"  ✅ Claim {idx+1}/{len(pairs_to_check)}: supported by {pair['source_id']}")
+
+        except Exception as e:
+            print(f"  ⚠️  Batch claim verification error ({e}) — falling back to per-claim check")
+            # Fallback: individual calls
+            for i, pair in enumerate(pairs_to_check):
+                try:
+                    single_result = llm.invoke([
+                        SystemMessage(content="You are a strict fact-checker. Answer in JSON."),
+                        HumanMessage(
+                            content=(
+                                f"Source [{pair['source_id']}] snippet:\n{pair['snippet'][:1000]}\n\n"
+                                f"Claim:\n{pair['claim']}\n\n"
+                                f"Does this source support the claim? "
+                                f"Answer as JSON: {{\"supported\": bool, \"reason\": \"string\"}}"
+                            )
+                        ),
+                    ])
+                    record_from_response("llama-3.1-8b-instant", single_result)
+                    raw2 = single_result.content if hasattr(single_result, "content") else str(single_result)
+                    jm = re.search(r"\{.*\}", raw2, re.DOTALL)
+                    verdict2 = json.loads(jm.group()) if jm else json.loads(raw2)
+                    if not verdict2.get("supported", False):
+                        unsupported.append({
+                            "claim_text": pair["claim"],
+                            "source_id": pair["source_id"],
+                            "source_url": pair.get("url", ""),
+                            "reason": verdict2.get("reason", "Unsupported"),
+                        })
+                except Exception:
+                    continue
 
     passed = len(unsupported) == 0
     summary = (
