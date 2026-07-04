@@ -332,18 +332,30 @@ def _ensure_sources_section(report: str, sources_data: str) -> str:
     If the writer already generated one, leave it as-is.
     If not, append one using the provided sources_data.
 
+    Skips appending if:
+    - sources_data indicates no sources were available (e.g. the
+      '⚠️ NO SOURCES AVAILABLE' case)
+    - The report is a single line (no-sources brief response)
+
     Args:
         report: The report text from the writer.
         sources_data: The source entries string.
 
     Returns:
-        Report with a Sources section guaranteed to exist.
+        Report with a Sources section guaranteed to exist (or unchanged
+        if no sources were available).
     """
     if re.search(r"^## Sources\b", report, re.MULTILINE):
-        # Writer already added a Sources section — no intervention needed
         return report
 
-    # No Sources section found — append one
+    # Don't append Sources section if no real sources exist
+    if not sources_data or "No source metadata" in sources_data or "No sources" in sources_data:
+        return report
+
+    # Don't append Sources for no-sources reports (identified by ⚠️ prefix)
+    if report.strip().startswith("⚠️"):
+        return report
+
     print(f"  📎 Appending Sources section to report")
     report = report.rstrip() + "\n\n## Sources\n" + sources_data
     return report
