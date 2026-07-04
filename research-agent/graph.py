@@ -199,17 +199,20 @@ def analysis_writer_node(state: ResearchState) -> dict:
     merged = state["merged_research"]
 
     if not merged or len(merged) < 50:
-        # No external research — mark clearly rather than letting LLM fabricate
-        # Without real search results, any LLM-generated text risks hallucination.
+        # No external research — use a clearly distinct placeholder that will NOT
+        # be mistaken for real source material.  The placeholder must:
+        # 1. NOT use ## Tracked Sources (the header the Analyst is trained to scan for [S#] IDs)
+        # 2. NOT use [S#] patterns that the LLM could mimic
+        # 3. Explicitly instruct the Analyst to produce ZERO citation tags
         merged = (
-            "## Research Results\n\n"
-            "No web search results were retrieved for this topic. "
-            "The following report is based solely on the existing knowledge of "
-            "the language model and may contain inaccuracies. No sources are available.\n\n"
-            "## Tracked Sources\n\n"
-            "No sources were retrieved during research.\n"
+            "⚠️ NO SOURCES AVAILABLE — ZERO SOURCES WERE RETRIEVED FOR THIS TOPIC.\n"
+            "DO NOT USE ANY [S#] CITATION TAGS. DO NOT INVENT SOURCES.\n"
+            "If the topic cannot be answered from available knowledge, "
+            "set has_sufficient_evidence=false and explain the gap.\n"
+            "Do not pad the report with repeated statements about missing data — "
+            "state the insufficiency ONCE and stop.\n"
         )
-        print(f"  ⚠️  Graph: No search results for '{topic}' — marking as source-free research")
+        print(f"  ⚠️  Graph: No search results for '{topic}' — Analyst will produce zero-citation report")
 
     # ── DEBUG: Log the actual sources being passed to the Analyst ──────
     tracked_sources_match = re.search(
