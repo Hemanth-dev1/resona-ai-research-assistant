@@ -25,7 +25,7 @@ from typing import Any, Optional
 MODEL_DAILY_LIMITS: dict[str, int] = {
     "llama-3.3-70b-versatile": 100_000,  # Groq
     "llama-3.1-8b-instant": 500_000,     # Groq
-    "gemini-3.5-flash": 1_000_000,        # Google — 1M TPM, effectively very high daily
+    "gemini-2.5-flash": 1_000_000,        # Google — established high-volume fallback model
 }
 
 # ── Known daily limits per provider ────────────────────────────────────────

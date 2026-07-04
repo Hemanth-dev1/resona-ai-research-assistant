@@ -31,7 +31,7 @@ class LLMProvider(str, Enum):
 # Default models per provider
 PROVIDER_DEFAULT_MODELS = {
     LLMProvider.GROQ: "llama-3.1-8b-instant",
-    LLMProvider.GEMINI: "gemini-3.5-flash",
+    LLMProvider.GEMINI: "gemini-2.5-flash",
     LLMProvider.OPENAI: "gpt-4o",
     LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20240620",
 }
@@ -39,7 +39,7 @@ PROVIDER_DEFAULT_MODELS = {
 # Fast (cheap/light) models for Planner, Research, Verification nodes
 PROVIDER_FAST_MODELS = {
     LLMProvider.GROQ: "llama-3.1-8b-instant",
-    LLMProvider.GEMINI: "gemini-3.5-flash",
+    LLMProvider.GEMINI: "gemini-2.5-flash",
     LLMProvider.OPENAI: "gpt-4o-mini",
     LLMProvider.ANTHROPIC: "claude-3-5-haiku-20241022",
 }
@@ -47,7 +47,7 @@ PROVIDER_FAST_MODELS = {
 # Capable (high-quality) models for Analyst, Writer, Critic nodes
 PROVIDER_CAPABLE_MODELS = {
     LLMProvider.GROQ: "llama-3.3-70b-versatile",
-    LLMProvider.GEMINI: "gemini-3.5-flash",  # Lower cap but much higher TPD budget
+    LLMProvider.GEMINI: "gemini-2.5-flash",  # Established stable, best for high-volume fallback
     LLMProvider.OPENAI: "gpt-4o",
     LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20240620",
 }
@@ -292,7 +292,7 @@ def get_fast_llm(
     from token_tracker import check_provider_fallback
     fb_provider, fb_model = check_provider_fallback(
         "groq",
-        fallback_model_name="gemini-3.5-flash",
+        fallback_model_name="gemini-2.5-flash",
         fallback_provider=LLMProvider.GEMINI,
     )
     if fb_provider is not None:
