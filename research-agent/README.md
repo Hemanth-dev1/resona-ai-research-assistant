@@ -86,8 +86,6 @@ Always uses LangGraph — no mode selection needed:
 | **langchain_groq.ChatGroq** | Direct Groq API access — no LiteLLM/CrewAI translation layer |
 | **LangChain LCEL** | Individual analysis/writing chains used as LangGraph node bodies |
 
-> Previously supported CrewAI and standalone LangChain modes. Consolidated on LangGraph to eliminate a class of provider-compatibility bugs (LiteLLM cache_breakpoint, Pydantic validation errors). The archived CrewAI code (`archive/agents.py`, `archive/tasks.py`) remains in the repo as reference.
-
 ### 2. 🔄 Self-Correcting Critic Loop
 
 Every report is automatically scored by an LLM judge across **5 quality dimensions**:
@@ -302,11 +300,6 @@ research-agent/
 ├── main.py                 # CLI entry point + report generation
 ├── server.py               # FastAPI web server with SSE streaming
 ├── router.py               # Pipeline router (always LangGraph)
-│
-├── archive/                # Archived CrewAI code (reference only)
-│   ├── agents.py
-│   ├── tasks.py
-│   └── tools.py
 │
 ├── critic.py               # Self-correcting critic loop
 ├── ragas_eval.py           # RAGAS quality evaluation
