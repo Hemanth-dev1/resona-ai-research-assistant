@@ -76,7 +76,7 @@ def run_pipeline(
         print(f"  🔍 Running fallback web search for '{topic}'...")
         try:
             from ddgs import DDGS
-            with DDGS() as ddgs:
+            with DDGS(timeout=20) as ddgs:
                 results = list(ddgs.text(topic, max_results=8))
                 if results:
                     sections = []

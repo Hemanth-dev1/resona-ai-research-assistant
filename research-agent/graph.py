@@ -108,10 +108,10 @@ def research_retry_node(state: ResearchState) -> dict:
 
         try:
             from ddgs import DDGS
-            with DDGS() as ddgs:
+            with DDGS(timeout=20) as ddgs:
                 results = list(ddgs.text(query, max_results=4))
         except ImportError:
-            print(f"     ⚠️  duckduckgo_search not installed — skipping web search")
+            print(f"     ⚠️  ddgs not installed — skipping web search")
             continue
         except Exception as e:
             print(f"     ⚠️  Search failed for '{query}': {e}")

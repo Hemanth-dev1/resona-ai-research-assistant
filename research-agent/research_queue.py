@@ -39,7 +39,7 @@ def _search_web(query: str, max_results: int = 5) -> list[dict]:
     """
     try:
         from ddgs import DDGS
-        with DDGS() as ddgs:
+        with DDGS(timeout=20) as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         if not results:
             return []
@@ -52,7 +52,7 @@ def _search_web(query: str, max_results: int = 5) -> list[dict]:
             for r in results
         ]
     except ImportError:
-        print("  ⚠️  Web search unavailable (duckduckgo_search not installed).")
+        print("  ⚠️  Web search unavailable (ddgs not installed).")
         return []
     except Exception as e:
         print(f"  ⚠️  Search error: {e}")
