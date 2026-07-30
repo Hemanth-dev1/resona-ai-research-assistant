@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -31,7 +32,31 @@ setup_tracing()
 
 from llm_config import get_provider
 
+from rate_limiter import check_rate_limit, get_rate_limit_remaining
+
+# Rate limit + request size config
+RESONA_MAX_INPUT_LENGTH = int(os.getenv("RESONA_MAX_INPUT_LENGTH", "4000"))
+
 app = FastAPI(title="Resona", version="1.1.0")
+
+
+# ── Rate limiting middleware ────────────────────────────────────────────────
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    # Only rate-limit expensive endpoints
+    if request.url.path in ("/api/run", "/api/chat/stream", "/api/chat/session", "/api/chat/documents"):
+        client_ip = request.client.host if request.client else "unknown"
+        if not check_rate_limit(client_ip):
+            from fastapi.responses import JSONResponse
+            remaining = get_rate_limit_remaining(client_ip)
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Try again later."},
+                headers={"X-RateLimit-Remaining": str(remaining)},
+            )
+    response = await call_next(request)
+    return response
 
 # Verify backend fix: session_store must have has_content(), chat_graph must use it
 from memory import session_store as _ss_check
@@ -341,7 +366,7 @@ async def run_agent_events(topic: str, depth: str = "standard", fmt: str = "mark
 async def api_run(request: Request):
     """Run the research agent with SSE streaming progress."""
     body = await request.json()
-    topic = body.get("topic", "").strip()
+    topic = _validate_input_length(body.get("topic", "").strip(), "topic")
     if not topic:
         raise HTTPException(status_code=422, detail="No topic provided")
 
@@ -380,7 +405,7 @@ async def chat_stream(request: Request):
     """
     body = await request.json()
     session_id = (body.get("session_id") or "").strip()
-    message = (body.get("message") or "").strip()
+    message = _validate_input_length((body.get("message") or "").strip(), "message")
     voice = bool(body.get("voice", False))
 
     if not session_id or not message:
@@ -425,8 +450,11 @@ async def upload_document(session_id: str = Form(...), file: UploadFile = File(.
     conversation_buffer.create_session(session_id)
     content = await file.read()
 
+    # Sanitize the filename
+    safe_name = _safe_filename(file.filename or "upload")
+
     try:
-        text = extract_text(file.filename, content)
+        text = extract_text(safe_name, content)
     except UnsupportedFileType as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileTooLarge as e:
@@ -435,7 +463,7 @@ async def upload_document(session_id: str = Form(...), file: UploadFile = File(.
     if not text.strip():
         raise HTTPException(status_code=422, detail="No extractable text found in file")
 
-    chunks = session_store.add_document(session_id, file.filename, text, doc_type="upload")
+    chunks = session_store.add_document(session_id, safe_name, text, doc_type="upload")
     return {"filename": file.filename, "chunks_stored": chunks}
 
 
@@ -475,6 +503,34 @@ async def list_reports():
             "has_pdf": has_pdf,
         })
     return {"reports": reports}
+
+
+def _validate_input_length(value: str, field_name: str, max_length: int = RESONA_MAX_INPUT_LENGTH) -> str:
+    """Validate and sanitize a user-supplied input string.
+
+    Rejects inputs that exceed the configured max length with 422.
+    Strips leading/trailing whitespace.
+    """
+    val = (value or "").strip()
+    if len(val) > max_length:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field_name} exceeds maximum length of {max_length} characters (got {len(val)}).",
+        )
+    return val
+
+
+def _safe_filename(filename: str) -> str:
+    """Sanitize a client-supplied filename: strip path separators and dangerous chars."""
+    import re
+    # Strip any leading path traversal
+    safe = os.path.basename(filename or "").strip()
+    # Remove any non-alphanumeric chars except dots, hyphens, underscores
+    safe = re.sub(r"[^\w.\-]", "_", safe)
+    # Prevent empty names (including whitespace-only and dot-only)
+    if not safe or safe.strip("._") == "":
+        safe = f"upload_{uuid.uuid4().hex[:8]}"
+    return safe
 
 
 def _safe_report_path(filename: str, expected_suffix: str = ".md") -> Path:
