@@ -1,30 +1,21 @@
 """Mocked tests for graph.py — LangGraph state machine routing.
 
 Tests verify node routing and critic loop termination without any LLM calls.
+Import-oriented tests (planner_node, critic_node) use context-manager patches
+on the import site inside the function, not on non-existent module attributes.
 """
 
 import sys
 import unittest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 
 
 class TestGraphRouting(unittest.TestCase):
-    """Test the graph's routing functions directly (no LLM calls needed)."""
+    """Test the graph's routing functions directly (no LLM calls needed).
 
-    def setUp(self):
-        # Prevent any real LLM/acstual chain imports
-        self._patches = [
-            patch("graph.run_planner"),
-            patch("graph.run_analysis_writing"),
-            patch("graph.run_claim_verification"),
-            patch("graph.score_report"),
-        ]
-        for p in self._patches:
-            p.start()
-
-    def tearDown(self):
-        for p in self._patches:
-            p.stop()
+    No setUp patches needed — routing functions are pure Python logic
+    that don't import any chain/critic modules at module level.
+    """
 
     def _make_state(self, **overrides):
         """Helper to build a ResearchState dict with defaults."""
@@ -61,7 +52,8 @@ class TestGraphRouting(unittest.TestCase):
     def test_route_from_start_with_research_skips_planner(self):
         """When merged_research exists, route to analysis_writer (skip planner)."""
         from graph import route_from_start
-        state = self._make_state(merged_research="## Tracked Sources\n\n[S1] Real source content here.")
+        # String must be > 50 chars to trigger the skip-to-analysis_writer path
+        state = self._make_state(merged_research="## Tracked Sources\n\n[S1] Real source content here, with extra length to exceed 50 chars threshold.")
         self.assertEqual(route_from_start(state), "analysis_writer")
 
     def test_route_from_start_without_research_goes_to_planner(self):
@@ -124,10 +116,28 @@ class TestGraphRouting(unittest.TestCase):
         )
         self.assertEqual(route_after_claim_verifier(state), "__end__")
 
+    def test_route_after_verifier_passed_goes_to_END(self):
+        """When verification passes, route to END."""
+        from graph import route_after_verifier
+        state = self._make_state(verification_passed=True)
+        self.assertEqual(route_after_verifier(state), "__end__")
+
+    def test_route_after_verifier_strict_failed_routes_to_revise(self):
+        """When strict mode and verification fails, route to revise."""
+        from graph import route_after_verifier
+        state = self._make_state(
+            verification_passed=False,
+            strict_verification=True,
+            verification_iterations=1,
+            max_verification_iterations=2,
+        )
+        self.assertEqual(route_after_verifier(state), "revise")
+
     def test_planner_node_calls_run_planner(self):
-        """planner_node calls chain.chain.run_planner and returns sub_questions."""
+        """planner_node calls chain.chain.run_planner via context-manager patch."""
         from graph import planner_node
-        with patch("graph.run_planner") as mock_planner:
+        # Patch at the source module where the function imports from
+        with patch("chain.chain.run_planner") as mock_planner:
             mock_planner.return_value = {
                 "sub_questions": [
                     {"question": "Q1?", "search_query": "Q1 search", "priority": 1},
@@ -137,12 +147,13 @@ class TestGraphRouting(unittest.TestCase):
             result = planner_node(state)
             self.assertEqual(len(result["sub_questions"]), 1)
             self.assertEqual(result["sub_questions"][0]["question"], "Q1?")
+            mock_planner.assert_called_once()
 
     def test_critic_node_increments_iteration(self):
         """critic_node increments critique_iterations and stores critique."""
         from graph import critic_node
-        with patch("graph.score_report") as mock_score:
-            from schemas.models import CritiqueResult, CritiqueDimension, DimensionScore
+        from schemas.models import CritiqueResult, DimensionScore, CritiqueDimension
+        with patch("critic.score_report") as mock_score:
             mock_score.return_value = CritiqueResult(
                 topic="test",
                 overall_score=8,
@@ -156,17 +167,7 @@ class TestGraphRouting(unittest.TestCase):
             self.assertEqual(result["critique_iterations"], 1)
             self.assertEqual(result["critique_score"], 8)
             self.assertTrue(result["critique_passed"])
-
-    def test_route_after_claim_verifier_goes_to_end_when_maxed(self):
-        """When max retries exhausted with unsupported claims, route to END (skips critic+verifier)."""
-        from graph import route_after_claim_verifier
-        state = self._make_state(
-            claim_verification_passed=False,
-            claim_verifier_iterations=2,
-            max_claim_verifier_iterations=2,
-            unsupported_claims=[{"claim_text": "fake", "source_id": "S1"}],
-        )
-        self.assertEqual(route_after_claim_verifier(state), "__end__")
+            mock_score.assert_called_once()
 
 
 class TestCitationIntegrity(unittest.TestCase):
@@ -181,7 +182,7 @@ class TestCitationIntegrity(unittest.TestCase):
         from chain.chain import _ensure_sources_section
 
         # Simulate the no-sources case merged_research from graph.py
-        report = "⚠️ No sources were available for this topic."
+        report = "\u26a0\ufe0f No sources were available for this topic."
         result = _ensure_sources_section(report, "No source metadata was available during research.")
         # Should NOT append a Sources section with fabricated IDs
         self.assertNotIn("## Sources", result)

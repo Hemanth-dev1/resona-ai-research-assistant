@@ -30,10 +30,11 @@ class TestWebSearch(unittest.TestCase):
                     {"url": "https://example.com/2", "title": "Result 2", "content": "Snippet 2"},
                 ]
             }
-            with patch("search_provider.TavilyClient", return_value=mock_client):
+            with patch("search_provider.TavilyClient", return_value=mock_client) as mock_patched:
                 results = search_provider.web_search("test query", max_results=2)
 
         self.assertEqual(len(results), 2)
+        mock_patched.assert_called_once()
         self.assertEqual(results[0]["url"], "https://example.com/1")
         self.assertEqual(results[0]["title"], "Result 1")
         self.assertEqual(results[0]["snippet"], "Snippet 1")
@@ -44,7 +45,7 @@ class TestWebSearch(unittest.TestCase):
         with patch.object(search_provider, "TAVILY_API_KEY", "tvly-fake-key"):
             mock_client = MagicMock()
             mock_client.search.return_value = {"results": []}
-            with patch("search_provider.TavilyClient", return_value=mock_client):
+            with patch("search_provider.TavilyClient", return_value=mock_client) as mock_tavily:
                 with patch("search_provider.DDGS") as mock_ddgs:
                     mock_instance = MagicMock()
                     mock_instance.text.return_value = [
@@ -70,6 +71,7 @@ class TestWebSearch(unittest.TestCase):
                 results = search_provider.web_search("test", max_results=2)
 
         self.assertEqual(len(results), 1)
+        mock_ddgs.assert_called_once()
 
     def test_both_providers_fail_returns_empty(self):
         """When both Tavily and ddgs fail, return empty list."""
@@ -77,7 +79,7 @@ class TestWebSearch(unittest.TestCase):
         with patch.object(search_provider, "TAVILY_API_KEY", "tvly-fake-key"):
             mock_client = MagicMock()
             mock_client.search.side_effect = Exception("Tavily down")
-            with patch("search_provider.TavilyClient", return_value=mock_client):
+            with patch("search_provider.TavilyClient", return_value=mock_client) as mock_tavily:
                 with patch("search_provider.DDGS") as mock_ddgs:
                     mock_instance = MagicMock()
                     mock_instance.text.side_effect = Exception("DDGS rate-limited")
@@ -90,7 +92,7 @@ class TestWebSearch(unittest.TestCase):
         """When tavily-python is not installed, fall back to ddgs."""
         import search_provider
         with patch.object(search_provider, "TAVILY_API_KEY", "tvly-fake-key"):
-            with patch("search_provider.TavilyClient", side_effect=ImportError("No module tavily")):
+            with patch("search_provider.TavilyClient", side_effect=ImportError("No module tavily")) as mock_tavily:
                 with patch("search_provider.DDGS") as mock_ddgs:
                     mock_instance = MagicMock()
                     mock_instance.text.return_value = [
@@ -112,6 +114,7 @@ class TestWebSearch(unittest.TestCase):
                     {"href": "https://x.com", "title": "X", "body": "Body text"}
                 ]
                 mock_ddgs.return_value.__enter__.return_value = mock_instance
+                results = search_provider.web_search("test", max_results=2)
                 results = search_provider.web_search("test", max_results=2)
 
         for r in results:

@@ -15,6 +15,9 @@ generic "Search error" line.
 
 import os
 
+from tavily import TavilyClient
+from ddgs import DDGS
+
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 
 
@@ -35,7 +38,6 @@ def web_search(query: str, max_results: int = 8) -> list[dict]:
 
 def _search_tavily(query: str, max_results: int) -> list[dict]:
     try:
-        from tavily import TavilyClient
         client = TavilyClient(api_key=TAVILY_API_KEY)
         response = client.search(query, max_results=max_results)
         return [
@@ -56,7 +58,6 @@ def _search_tavily(query: str, max_results: int) -> list[dict]:
 
 def _search_ddgs(query: str, max_results: int) -> list[dict]:
     try:
-        from ddgs import DDGS
         with DDGS(timeout=20) as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
         return [
