@@ -29,9 +29,5 @@ Thumbs.db
 # Generated (will be created at runtime via volumes)
 output/
 chroma_db/
-
-# Tests
-tests/
-
-# Docs
-README.md
+chroma_db_sessions/
+.pytest_cache/

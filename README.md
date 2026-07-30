@@ -146,9 +146,6 @@ Configurable via `RESONA_MAX_RETRIES` (default: 3), `RESONA_RETRY_MIN_WAIT` (1s)
 ### Local Setup
 
 ```bash
-# Clone and enter the project
-cd research-agent
-
 # Create and activate virtual environment
 python3 -m venv venv
 source venv/bin/activate
@@ -229,36 +226,12 @@ Set these environment secrets in the Render dashboard:
 - `TAVILY_API_KEY` — your Tavily API key (recommended)
 - `GOOGLE_API_KEY` — your Gemini API key (optional fallback)
 
-```bash
-# Chat: create a session
-curl -X POST http://localhost:8080/api/chat/session
-
-# Chat: stream a message
-curl -N -X POST http://localhost:8080/api/chat/stream \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"<sid>","message":"Hello","voice":false}'
-
-# Deep research (SSE streaming)
-curl -X POST http://localhost:8080/api/run \
-  -H "Content-Type: application/json" \
-  -d '{"topic":"Quantum computing 2026"}'
-
-# List reports
-curl http://localhost:8080/api/reports
-
-# Delete a report
-curl -X DELETE http://localhost:8080/api/reports/<filename>
-
-# Health check
-curl http://localhost:8080/health
-```
-
 ---
 
 ## 📁 Project Structure
 
 ```
-research-agent/
+.
 ├── .env                      # API keys & config
 ├── .env.example              # Template for .env
 ├── .gitignore
@@ -340,7 +313,6 @@ research-agent/
 ## 🧪 Tests
 
 ```bash
-cd research-agent
 PYTHONPATH=. pytest tests/ -v
 ```
 
@@ -348,7 +320,10 @@ Tests verify:
 - Markdown and PDF report generation
 - Output directory creation
 - LangGraph mode routing
-- Fallback web research
+- Web search fallback (mocked tests, no API keys needed)
+- Session lifecycle and chat buffer CRUD
+- Hedge-phrase detection and critic scoring
+- Citation integrity (no fabricated sources)
 
 ---
 

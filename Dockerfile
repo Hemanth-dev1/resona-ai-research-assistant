@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
 # Copy requirements first for layer caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -19,8 +22,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create output and chroma_db directories
-RUN mkdir -p output chroma_db
+# Create output and chroma_db directories, set ownership
+RUN mkdir -p output chroma_db && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 # Expose the FastAPI port
 EXPOSE 8080
