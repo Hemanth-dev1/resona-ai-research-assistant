@@ -55,6 +55,7 @@ class TestWebSearch(unittest.TestCase):
                     results = search_provider.web_search("test query", max_results=2)
 
         self.assertEqual(len(results), 1)
+        mock_tavily.assert_called_once()
         self.assertEqual(results[0]["url"], "https://ddgs.example.com")
         self.assertEqual(results[0]["title"], "DDGS Result")
 
@@ -102,6 +103,7 @@ class TestWebSearch(unittest.TestCase):
                     results = search_provider.web_search("test", max_results=2)
 
         self.assertEqual(len(results), 1)
+        mock_tavily.assert_called_once()
         self.assertEqual(results[0]["url"], "https://ddgs.example.com")
 
     def test_output_format_has_expected_keys(self):
