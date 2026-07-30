@@ -70,6 +70,15 @@ Tavily is tried first when configured. If unset or unavailable, the system falls
 - Subsequent research on related topics automatically retrieves prior findings as additional context.
 - Cross-session persistence survives server restarts.
 
+### 📊 RAGAS Quality Evaluation
+
+Resona evaluates every deep research report using three LLM-as-judge metrics:
+- **Faithfulness** — are claims supported by retrieved context?
+- **Answer Relevancy** — how relevant is the report to the topic?
+- **Context Recall** — was all relevant context retrieved?
+
+Scores are stored in `output/ragas_scores.json` and exposed via `GET /api/ragas`. Each run generates a quality scorecard alongside the report.
+
 ### 🔁 Retry Logic with Exponential Backoff
 
 Every LLM call is wrapped with **tenacity** retry:
@@ -177,6 +186,23 @@ python main.py
 echo "Quantum computing breakthroughs 2026" | python main.py
 ```
 
+## 🌐 Deploy to Render
+
+Resona is pre-configured for one-click deployment to [Render](https://render.com):
+
+```bash
+git push origin main
+# Connect your GitHub repo at https://render.com → New → Web Service
+# Render auto-detects render.yaml
+```
+
+Set these environment secrets in the Render dashboard:
+- `GROQ_API_KEY` — your Groq API key
+- `TAVILY_API_KEY` — your Tavily API key (recommended)
+- `GOOGLE_API_KEY` — your Gemini API key (optional fallback)
+
+---
+
 ### Usage — API
 
 ```bash
@@ -240,7 +266,7 @@ research-agent/
 ├── search_provider.py        # Unified web search (Tavily + ddgs fallback)
 ├── research_queue.py         # Parallel sub-question research
 ├── critic.py                 # Self-correcting critic loop
-├── verifier                  # Fact-checking (inside chain.py)
+├── graph.py                   # LangGraph state machine (critic, verifier nodes)
 │
 ├── schemas/
 │   ├── models.py             # Pydantic data models
