@@ -1,0 +1,14 @@
+.env
+venv/
+__pycache__/
+chroma_db/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+output/*.pdf
+output/*.md
+output/ragas_scores.json
+.DS_Store
+.idea/
+.vscode/

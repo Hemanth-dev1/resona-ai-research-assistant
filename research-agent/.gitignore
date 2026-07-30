@@ -1,14 +1,35 @@
+# Environment
 .env
-venv/
+.env.local
+.env.*.local
+
+# Python
 __pycache__/
-chroma_db/
-*.py[cod]
+venv/
+.venv/
+*.egg
 *.egg-info/
+*.py[cod]
 dist/
 build/
+
+# Generated reports
 output/*.pdf
 output/*.md
 output/ragas_scores.json
+.chroma_db/
+
+# Chroma
+chroma_db/
+chroma_db_sessions/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~

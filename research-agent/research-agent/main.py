@@ -34,8 +34,8 @@ if not os.getenv(api_key_env):
     print(f"❌ {api_key_env} not found in .env file for provider '{provider.value}'.")
     sys.exit(1)
 
-if not os.getenv("TAVILY_API_KEY"):
-    print("⚠️  TAVILY_API_KEY not found. Web search will fall back to DuckDuckGo.\n")
+if not os.getenv("SERPER_API_KEY"):
+    print("⚠️  SERPER_API_KEY not found. Web search will fall back to DuckDuckGo.\n")
 
 
 # ---------------------------------------------------------------------------

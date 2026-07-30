@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  resona:
+    build: .
+    container_name: resona
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persist ChromaDB data across restarts
+      - chroma_data:/app/chroma_db
+      # Persist generated reports
+      - report_output:/app/output
+      # Mount .env for configuration (optional, for local dev)
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    # Resource limits
+    mem_limit: 4g
+    mem_reservation: 2g
+
+volumes:
+  chroma_data:
+    name: resona_chroma_data
+  report_output:
+    name: resona_report_output

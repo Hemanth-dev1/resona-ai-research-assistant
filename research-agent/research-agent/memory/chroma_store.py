@@ -3,9 +3,6 @@
 All generated reports are chunked and stored in a local ChromaDB instance.
 Subsequent research on related topics automatically retrieves prior findings
 as additional context for the LangChain pipeline.
-
-Uses OpenAI embeddings when OPENAI_API_KEY is available, but falls back to
-ChromaDB's local embedding function when no OpenAI key is present.
 """
 
 import os
@@ -15,12 +12,8 @@ from typing import Any, Optional
 import chromadb
 from chromadb import EmbeddingFunction, Documents, Embeddings
 from chromadb.errors import NotFoundError
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction, register_embedding_function
-
-try:
-    from langchain_openai import OpenAIEmbeddings
-except ImportError:
-    OpenAIEmbeddings = None
+from chromadb.utils.embedding_functions import register_embedding_function
+from langchain_openai import OpenAIEmbeddings
 
 
 # Default paths
@@ -58,16 +51,9 @@ class _OpenAIEmbeddingFunction(EmbeddingFunction):
         return _OpenAIEmbeddingFunction(model=config.get("model", "text-embedding-3-small"))
 
 
-def get_embedding_function() -> Any:
-    """Create a Chroma-compatible embedding function.
-
-    Falls back to the local Chroma DefaultEmbeddingFunction if OpenAI is
-    unavailable, so the research memory feature works even without an
-    OPENAI_API_KEY.
-    """
-    if os.getenv("OPENAI_API_KEY") and OpenAIEmbeddings is not None:
-        return _OpenAIEmbeddingFunction(model="text-embedding-3-small")
-    return DefaultEmbeddingFunction()
+def get_embedding_function() -> _OpenAIEmbeddingFunction:
+    """Create a Chroma-compatible OpenAI embedding function."""
+    return _OpenAIEmbeddingFunction(model="text-embedding-3-small")
 
 
 def _get_client(path: Optional[str] = None) -> chromadb.PersistentClient:
@@ -89,9 +75,8 @@ def _get_client(path: Optional[str] = None) -> chromadb.PersistentClient:
 def _get_collection(client: Optional[chromadb.PersistentClient] = None) -> chromadb.Collection:
     """Get or create the research memory collection (cached).
 
-    Uses the configured embedding function for vector search. If OPENAI_API_KEY
-    is available, it will use OpenAI embeddings; otherwise it falls back to
-    ChromaDB's local default embedding function.
+    Uses OpenAI embeddings for vector search. The client and embedding function
+    are cached to avoid reinitializing the model on every call.
 
     Args:
         client: Optional ChromaDB client. Uses cached client if not provided.

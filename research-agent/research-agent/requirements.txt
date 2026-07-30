@@ -11,8 +11,6 @@ langchain>=0.3.0
 langchain-community>=0.3.0
 langchain-groq>=0.2.0
 langchain-openai>=0.2.0
-langchain-google-genai>=0.2.0
-langchain-anthropic>=0.2.0
 chromadb>=0.5.0
 faiss-cpu>=1.8.0
 tiktoken>=0.8.0
@@ -22,10 +20,3 @@ opentelemetry-sdk>=1.30.0
 opentelemetry-instrumentation-openai>=0.5.0
 tenacity>=9.0.0
 langgraph>=0.2.0
-
-# Chat mode document ingestion
-pypdf>=4.3.0
-python-docx>=1.1.0
-
-# Web search — Tavily (reliable, primary) + ddgs (free fallback)
-tavily-python>=0.5.0

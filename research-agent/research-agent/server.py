@@ -16,8 +16,8 @@ from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 
 load_dotenv()
@@ -32,11 +32,6 @@ setup_tracing()
 from llm_config import get_provider
 
 app = FastAPI(title="Resona", version="1.1.0")
-
-# Verify backend fix: session_store must have has_content(), chat_graph must use it
-from memory import session_store as _ss_check
-if not hasattr(_ss_check, 'has_content'):
-    raise RuntimeError("session_store missing has_content() — check memory/session_store.py")
 
 OUTPUT_DIR = Path(__file__).parent / "output"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -54,35 +49,10 @@ async def health():
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Unified UI (React): chat + deep research in one page, mode switched via the + menu in the composer."""
     html_path = STATIC_DIR / "index.html"
     if html_path.exists():
         return HTMLResponse(html_path.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Frontend not found — run the server from the project root.</h1>")
-
-
-@app.get("/chat")
-async def chat_ui_redirect():
-    """There is no separate chat page. Redirect old bookmarks to the unified UI."""
-    return RedirectResponse(url="/", status_code=302)
-
-
-@app.get("/legacy/report", response_class=HTMLResponse)
-async def legacy_report_ui():
-    """Original report-only UI, kept only as a dead-end reference route. Not linked from the UI."""
-    html_path = STATIC_DIR / "index.html"
-    if html_path.exists():
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>Not found.</h1>")
-
-
-@app.get("/legacy/chat", response_class=HTMLResponse)
-async def legacy_chat_ui():
-    """Original chat-only UI, kept only as a dead-end reference route. Not linked from the UI."""
-    html_path = STATIC_DIR / "chat.html"
-    if html_path.exists():
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>Not found.</h1>")
 
 
 # ── SSE: run research agent with live progress ──────────────────────────────
@@ -343,7 +313,7 @@ async def api_run(request: Request):
     body = await request.json()
     topic = body.get("topic", "").strip()
     if not topic:
-        raise HTTPException(status_code=422, detail="No topic provided")
+        return {"error": "No topic provided"}
 
     return EventSourceResponse(
         run_agent_events(
@@ -353,97 +323,6 @@ async def api_run(request: Request):
             model=body.get("model"),
         )
     )
-
-
-# ── Chat API (multi-session) ────────────────────────────────────────────────
-
-from chat import conversation_buffer
-from chat.chat_graph import stream_chat_response
-from ingestion.document_parser import extract_text, UnsupportedFileType, FileTooLarge
-from memory import session_store
-
-
-@app.post("/api/chat/session")
-async def create_chat_session():
-    """Create a new isolated chat session. Returns a session_id the client stores
-    (e.g. localStorage) and sends with every subsequent request."""
-    session_id = session_store.new_session_id()
-    conversation_buffer.create_session(session_id)
-    return {"session_id": session_id}
-
-
-@app.post("/api/chat/stream")
-async def chat_stream(request: Request):
-    """Stream a chat reply token-by-token over SSE.
-
-    Body: {"session_id": str, "message": str, "voice": bool}
-    """
-    body = await request.json()
-    session_id = (body.get("session_id") or "").strip()
-    message = (body.get("message") or "").strip()
-    voice = bool(body.get("voice", False))
-
-    if not session_id or not message:
-        raise HTTPException(status_code=422, detail="session_id and message are required")
-
-    async def events():
-        def send(event: str, data: dict):
-            return {"event": event, "data": json.dumps(data)}
-
-        try:
-            async for chunk in stream_chat_response(session_id, message, voice=voice):
-                if chunk["type"] == "token":
-                    yield send("token", {"text": chunk["text"]})
-                elif chunk["type"] == "done":
-                    yield send("done", {"sources": chunk["sources"]})
-                elif chunk["type"] == "error":
-                    yield send("error", {"message": chunk["message"]})
-        except Exception as e:
-            import traceback
-            print(f"❌ Chat stream error: {e}\n{traceback.format_exc()}")
-            yield send("error", {"message": str(e)})
-
-    return EventSourceResponse(events())
-
-
-@app.get("/api/chat/history/{session_id}")
-async def chat_history(session_id: str):
-    """Full message history for a session (for reloading the UI on refresh)."""
-    if not conversation_buffer.session_exists(session_id):
-        return {"session_id": session_id, "messages": [], "documents": []}
-    messages = conversation_buffer.get_full_history(session_id)
-    return {
-        "session_id": session_id,
-        "messages": [m.model_dump() for m in messages],
-        "documents": session_store.list_documents(session_id),
-    }
-
-
-@app.post("/api/chat/documents")
-async def upload_document(session_id: str = Form(...), file: UploadFile = File(...)):
-    """Upload a document (.txt/.md/.pdf/.docx) into a session's knowledge base."""
-    conversation_buffer.create_session(session_id)
-    content = await file.read()
-
-    try:
-        text = extract_text(file.filename, content)
-    except UnsupportedFileType as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except FileTooLarge as e:
-        raise HTTPException(status_code=413, detail=str(e))
-
-    if not text.strip():
-        raise HTTPException(status_code=422, detail="No extractable text found in file")
-
-    chunks = session_store.add_document(session_id, file.filename, text, doc_type="upload")
-    return {"filename": file.filename, "chunks_stored": chunks}
-
-
-@app.delete("/api/chat/session/{session_id}")
-async def delete_chat_session(session_id: str):
-    """Clear a session's history and uploaded documents."""
-    conversation_buffer.clear_session(session_id)
-    return {"session_id": session_id, "deleted": True}
 
 
 # ── Reports API ─────────────────────────────────────────────────────────────
@@ -477,28 +356,19 @@ async def list_reports():
     return {"reports": reports}
 
 
-def _safe_report_path(filename: str, expected_suffix: str = ".md") -> Path:
-    if not filename.endswith(expected_suffix):
-        raise HTTPException(status_code=400, detail="Invalid report filename")
-
-    report_path = (OUTPUT_DIR / filename).resolve()
-    if not str(report_path).startswith(str(OUTPUT_DIR.resolve()) + os.sep):
-        raise HTTPException(status_code=400, detail="Invalid report filename")
-    return report_path
-
-
 @app.get("/api/reports/{filename}")
 async def get_report(filename: str):
     """Get the content of a specific report."""
-    md_path = _safe_report_path(filename, expected_suffix=".md")
-    if not md_path.exists() or not md_path.is_file():
-        raise HTTPException(status_code=404, detail="Report not found")
+    md_path = OUTPUT_DIR / filename
+    if not md_path.exists():
+        return {"error": "Report not found"}
 
     content = md_path.read_text(encoding="utf-8")
     pdf_path = md_path.with_suffix(".pdf")
     has_pdf = pdf_path.exists()
 
     topic = filename.replace("_", " ").rsplit(".", 1)[0]
+    # Clean up the topic from the filename pattern
     topic = re.sub(r"_\d{8}_\d{6}$", "", topic)
 
     return {
@@ -510,36 +380,16 @@ async def get_report(filename: str):
     }
 
 
-# ── Delete a report ────────────────────────────────────────────────────────
-
-@app.delete("/api/reports/{filename}")
-async def delete_report(filename: str):
-    """Delete a report and its PDF (if exists). Returns 404 if not found."""
-    md_path = _safe_report_path(filename, expected_suffix=".md")
-    if not md_path.exists() or not md_path.is_file():
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    # Delete the markdown file
-    md_path.unlink()
-
-    # Delete the corresponding PDF if it exists
-    pdf_path = md_path.with_suffix(".pdf")
-    if pdf_path.exists():
-        pdf_path.unlink()
-
-    return {"deleted": filename, "also_pdf": pdf_path.exists() is False}
-
-
 # ── PDF download ────────────────────────────────────────────────────────────
 
 @app.get("/api/reports/{filename}/pdf")
 async def get_report_pdf(filename: str):
     """Serve the PDF version of a report."""
-    md_path = _safe_report_path(filename, expected_suffix=".md")
-    pdf_path = md_path.with_suffix(".pdf")
-    if not pdf_path.exists() or not pdf_path.is_file():
-        raise HTTPException(status_code=404, detail="PDF not found")
-    return FileResponse(str(pdf_path), media_type="application/pdf", filename=pdf_path.name)
+    pdf_name = filename.replace(".md", ".pdf")
+    pdf_path = OUTPUT_DIR / pdf_name
+    if not pdf_path.exists():
+        return {"error": "PDF not found"}
+    return FileResponse(str(pdf_path), media_type="application/pdf", filename=pdf_name)
 
 
 # ── Memory / Topics API ─────────────────────────────────────────────────────

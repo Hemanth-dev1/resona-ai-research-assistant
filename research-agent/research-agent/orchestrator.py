@@ -74,35 +74,40 @@ def run_pipeline(
         # IMPORTANT: Format results with Source IDs (S1, S2...) and a Tracked
         # Sources section so the Analyst never receives untracked text.
         print(f"  🔍 Running fallback web search for '{topic}'...")
-        from search_provider import web_search
-        results = web_search(topic, max_results=8)
-        if results:
-            sections = []
-            sources_lines = ["## Tracked Sources\n"]
-            for i, r in enumerate(results):
-                sid = f"S{i+1}"
-                title = r.get("title", "Untitled")
-                url = r.get("url", "")
-                body = r.get("snippet", "")
-                sections.append(
-                    f"## Research Finding: {title}\n"
-                    f"[{sid}] {title}\n"
-                    f"    URL: {url}\n"
-                    f"    {body[:500]}"
-                )
-                sources_lines.append(
-                    f"- **[{sid}]** {title}\n"
-                    f"  URL: {url}\n"
-                    f"  {body[:200]}\n"
-                )
-            merged_research = (
-                f"# Parallel Research: {topic}\n\n"
-                + "\n\n---\n\n".join(sections)
-                + "\n\n---\n\n"
-                + "\n".join(sources_lines)
-            )
-            print(f"  ✅ Web search: {len(results)} results, {len(merged_research)} chars")
-        else:
+        try:
+            from ddgs import DDGS
+            with DDGS(timeout=20) as ddgs:
+                results = list(ddgs.text(topic, max_results=8))
+                if results:
+                    sections = []
+                    sources_lines = ["## Tracked Sources\n"]
+                    for i, r in enumerate(results):
+                        sid = f"S{i+1}"
+                        title = r.get("title", "Untitled")
+                        url = r.get("href", "")
+                        body = r.get("body", "")
+                        sections.append(
+                            f"## Research Finding: {title}\n"
+                            f"[{sid}] {title}\n"
+                            f"    URL: {url}\n"
+                            f"    {body[:500]}"
+                        )
+                        sources_lines.append(
+                            f"- **[{sid}]** {title}\n"
+                            f"  URL: {url}\n"
+                            f"  {body[:200]}\n"
+                        )
+                    merged_research = (
+                        f"# Parallel Research: {topic}\n\n"
+                        + "\n\n---\n\n".join(sections)
+                        + "\n\n---\n\n"
+                        + "\n".join(sources_lines)
+                    )
+                    print(f"  ✅ Web search: {len(results)} results, {len(merged_research)} chars")
+                else:
+                    merged_research = ""
+        except Exception as e:
+            print(f"  ⚠️  Web search failed: {e} — using LLM-only mode")
             merged_research = ""
 
     # Step 2: Analysis + Writing + Critic + Verification (always LangGraph)

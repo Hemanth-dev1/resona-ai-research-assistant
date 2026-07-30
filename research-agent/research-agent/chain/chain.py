@@ -84,11 +84,7 @@ def _get_llms() -> tuple:
     from llm_config import get_fast_llm, get_capable_llm
 
     fast_llm = get_fast_llm(temperature=0.3, max_tokens=4096)
-    # Lower than the planner's — the writer should synthesize the
-    # analyst's findings faithfully, not improvise. Reduces both
-    # cross-section repetition and the odds of embellished/invented
-    # phrasing around real citations.
-    capable_llm = get_capable_llm(temperature=0.15, max_tokens=8192)
+    capable_llm = get_capable_llm(temperature=0.3, max_tokens=8192)
     return fast_llm, capable_llm
 
 

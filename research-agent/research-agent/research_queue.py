@@ -26,22 +26,37 @@ a paid tier or a provider with higher limits."""
 # ── Web search helpers (sync, wrapped in asyncio.to_thread) ────────────────
 
 def _search_web(query: str, max_results: int = 5) -> list[dict]:
-    """Run a web search and return structured source dicts.
-
-    Delegates to search_provider.web_search which tries Tavily first
-    (if TAVILY_API_KEY is set), then falls back to ddgs (free, no key
-    needed). Previously this function called ddgs directly and silently
-    swallowed all errors — that was the root cause of "no sources
-    retrieved" failures.
+    """Run a DuckDuckGo search and return structured source dicts.
 
     Each result is a dict with keys: url, title, snippet (the body text).
+    This replaces the old string formatting — sources are now structured
+    so they can be assigned IDs (S1, S2, ...) and tracked through the
+    pipeline to the final report.
 
     Returns:
         List of dicts, each with 'url', 'title', 'snippet' keys.
         Empty list on error or no results.
     """
-    from search_provider import web_search
-    return web_search(query, max_results=max_results)
+    try:
+        from ddgs import DDGS
+        with DDGS(timeout=20) as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        if not results:
+            return []
+        return [
+            {
+                "url": r.get("href", ""),
+                "title": r.get("title", ""),
+                "snippet": r.get("body", ""),
+            }
+            for r in results
+        ]
+    except ImportError:
+        print("  ⚠️  Web search unavailable (ddgs not installed).")
+        return []
+    except Exception as e:
+        print(f"  ⚠️  Search error: {e}")
+        return []
 
 
 def _format_sources_with_ids(raw_sources: list[dict]) -> tuple[str, list[dict]]:
@@ -281,47 +296,22 @@ async def run_parallel_research(
 
     # Per sub-question findings
     finding_sections: list[str] = []
-    all_sources: dict[str, dict] = {}  # url -> source dict WITH a GLOBAL id
+    all_sources: dict[str, dict] = {}  # Deduplicate sources by URL
 
     for i, r in enumerate(results):
         question = r.get("question", f"Sub-question {i+1}")
         findings = r.get("findings", "")
-        sources = r.get("sources", [])  # each has its own PER-SUB-QUESTION-LOCAL id, e.g. "S1"
-
-        # _format_sources_with_ids() numbers sources independently per
-        # sub-question (every sub-question starts at S1). Build a
-        # local-id -> global-id remap here: reuse the existing global id
-        # if this URL already appeared in an earlier sub-question,
-        # otherwise mint a new one. Without this, unrelated sources from
-        # different sub-questions collide under the same [S#] tag.
-        local_to_global: dict[str, str] = {}
-        for src in sources:
-            url = src.get("url", "")
-            local_id = src.get("id", "")
-            if not url or not local_id:
-                continue
-            if url in all_sources:
-                global_id = all_sources[url]["id"]
-            else:
-                global_id = f"S{len(all_sources) + 1}"
-                all_sources[url] = {**src, "id": global_id}
-            local_to_global[local_id] = global_id
-
-        # Rewrite this sub-question's findings text so every [S#] tag now
-        # points at the GLOBAL id. Sort local ids longest-first so "S10"
-        # is replaced before "S1" — otherwise a naive replace could
-        # corrupt "S10" into "<global-for-S1>0".
-        rewritten = findings
-        for local_id in sorted(local_to_global, key=len, reverse=True):
-            rewritten = re.sub(
-                rf"\[{re.escape(local_id)}\]",
-                f"[{local_to_global[local_id]}]",
-                rewritten,
-            )
+        sources = r.get("sources", [])
 
         finding_sections.append(
-            f"## Research Finding {i+1}: {question}\n{rewritten}"
+            f"## Research Finding {i+1}: {question}\n{findings}"
         )
+
+        # Collect all sources, deduplicating by URL
+        for src in sources:
+            url = src.get("url", "")
+            if url and url not in all_sources:
+                all_sources[url] = src
 
     # Consolidated Sources section at the end
     sources_section = "## Tracked Sources\n\n"
