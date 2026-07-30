@@ -186,6 +186,34 @@ python main.py
 echo "Quantum computing breakthroughs 2026" | python main.py
 ```
 
+### Usage — API
+
+```bash
+# Chat: create a session
+curl -X POST http://localhost:8080/api/chat/session
+
+# Chat: stream a message
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"<sid>","message":"Hello","voice":false}'
+
+# Deep research (SSE streaming)
+curl -X POST http://localhost:8080/api/run \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"Quantum computing 2026"}'
+
+# List reports
+curl http://localhost:8080/api/reports
+
+# Delete a report
+curl -X DELETE http://localhost:8080/api/reports/<filename>
+
+# Health check
+curl http://localhost:8080/health
+```
+
+---
+
 ## 🌐 Deploy to Render
 
 Resona is pre-configured for one-click deployment to [Render](https://render.com):
@@ -200,10 +228,6 @@ Set these environment secrets in the Render dashboard:
 - `GROQ_API_KEY` — your Groq API key
 - `TAVILY_API_KEY` — your Tavily API key (recommended)
 - `GOOGLE_API_KEY` — your Gemini API key (optional fallback)
-
----
-
-### Usage — API
 
 ```bash
 # Chat: create a session
