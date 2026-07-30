@@ -5,13 +5,23 @@
 
 # Python
 __pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
 venv/
 .venv/
 *.egg
+*.egg-info/
+*.py[cod]
+dist/
+build/
+
+# Generated reports
+output/*.pdf
+output/*.md
+output/ragas_scores.json
+.chroma_db/
+
+# Chroma
+chroma_db/
+chroma_db_sessions/
 
 # OS
 .DS_Store
@@ -23,9 +33,3 @@ Thumbs.db
 *.swp
 *.swo
 *~
-
-# Docker
-.chroma_db/
-
-# Generated reports (each subproject has its own)
-output/

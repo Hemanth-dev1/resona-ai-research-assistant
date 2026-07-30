@@ -1,0 +1,1184 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Resona — AI Research Assistant</title>
+<meta name="description" content="Ask anything. Chat or get a researched, cited report." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'] },
+        colors: {
+          background: 'rgb(var(--bg) / <alpha-value>)',
+          surface: 'rgb(var(--surface) / <alpha-value>)',
+          'surface-hover': 'rgb(var(--surface-hover) / <alpha-value>)',
+          border: 'rgb(var(--border) / <alpha-value>)',
+          foreground: 'rgb(var(--fg) / <alpha-value>)',
+          muted: 'rgb(var(--muted) / <alpha-value>)',
+          primary: 'rgb(var(--primary) / <alpha-value>)',
+          'primary-fg': 'rgb(var(--primary-fg) / <alpha-value>)',
+        }
+      }
+    }
+  }
+</script>
+<style>
+  :root.dark {
+    --bg: 10 10 10; --surface: 22 22 24; --surface-hover: 30 30 33;
+    --border: 38 38 42; --fg: 240 240 242; --muted: 150 150 160;
+    --primary: 99 102 241; --primary-fg: 255 255 255;
+  }
+  :root.light {
+    --bg: 252 252 253; --surface: 245 245 247; --surface-hover: 238 238 241;
+    --border: 224 224 230; --fg: 20 20 24; --muted: 100 100 110;
+    --primary: 79 70 229; --primary-fg: 255 255 255;
+  }
+  html, body, #root { height: 100%; }
+  body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: rgb(var(--bg)); color: rgb(var(--fg)); }
+  .thinking-dot { width: 5px; height: 5px; border-radius: 9999px; background: rgb(var(--muted)); display: inline-block; animation: pulse 1.2s infinite ease-in-out; }
+  @keyframes pulse { 0%,80%,100% { opacity:.25; transform: scale(.8);} 40% { opacity:1; transform: scale(1);} }
+  .message-in { animation: msgIn .25s ease-out; }
+  @keyframes msgIn { from { opacity:0; transform: translateY(4px);} to { opacity:1; transform: none;} }
+  .prose-resona { font-size: 15px; line-height: 1.75; color: rgb(var(--fg)); }
+  .prose-resona h1 { font-size: 1.6em; font-weight: 700; margin: 1.2em 0 .5em; letter-spacing: -.01em; }
+  .prose-resona h2 { font-size: 1.3em; font-weight: 600; margin: 1.4em 0 .4em; }
+  .prose-resona h3 { font-size: 1.1em; font-weight: 600; margin: 1.2em 0 .3em; }
+  .prose-resona p { margin: .7em 0; }
+  .prose-resona ul, .prose-resona ol { margin: .7em 0; padding-left: 1.4em; }
+  .prose-resona ul { list-style: disc; } .prose-resona ol { list-style: decimal; }
+  .prose-resona li { margin: .25em 0; }
+  .prose-resona a { color: rgb(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
+  .prose-resona code { background: rgb(var(--surface)); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+  .prose-resona pre { background: rgb(var(--surface)); padding: 14px 16px; border-radius: 10px; overflow:auto; margin: .8em 0; border: 1px solid rgb(var(--border)); }
+  .prose-resona pre code { background: transparent; padding: 0; }
+  .prose-resona blockquote { border-left: 3px solid rgb(var(--border)); padding-left: 1em; color: rgb(var(--muted)); margin: .8em 0; }
+  .prose-resona table { width:100%; border-collapse: collapse; margin: .8em 0; font-size: .95em; }
+  .prose-resona th, .prose-resona td { border: 1px solid rgb(var(--border)); padding: 6px 10px; text-align: left; }
+  .prose-resona strong { color: rgb(var(--fg)); }
+  .prose-resona hr { margin: 1em 0; border: none; border-top: 1px solid rgb(var(--border)); }
+  .scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 8px; }
+
+  /* ── Responsive mobile drawer ── */
+  .sidebar-overlay {
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(0,0,0,0.5);
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s ease;
+  }
+  .sidebar-overlay.open { opacity: 1; pointer-events: auto; }
+
+  @media (max-width: 767px) {
+    .sidebar-drawer {
+      position: fixed; left: 0; top: 0; bottom: 0; z-index: 50;
+      width: 260px; max-width: 80vw;
+      transform: translateX(-100%);
+      transition: transform .3s cubic-bezier(.4,0,.2,1);
+      padding-left: env(safe-area-inset-left, 0px);
+    }
+    .sidebar-drawer.open { transform: translateX(0); }
+    .desktop-sidebar { display: none !important; }
+  }
+  @media (min-width: 768px) {
+    .mobile-sidebar-toggle { display: none !important; }
+    .sidebar-overlay, .sidebar-drawer { display: none !important; }
+  }
+
+  /* ── Attach menu ── */
+  .attach-wrap{position:relative; display:flex; align-items:center;}
+  .attach-menu{position:absolute; bottom:calc(100% + 8px); left:0; background:rgb(var(--surface)); border:1px solid rgb(var(--border));
+    border-radius:12px; padding:6px; min-width:210px; box-shadow:0 8px 24px rgba(0,0,0,0.35);
+    display:none; flex-direction:column; gap:2px; z-index:30;}
+  .attach-menu.open{display:flex;}
+  .attach-item{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; cursor:pointer;
+    font-size:13px; color:rgb(var(--fg)); transition:background 0.12s;}
+  .attach-item:hover{background:rgb(var(--surface-hover));}
+  .attach-item .ico{width:18px; text-align:center; flex-shrink:0;}
+  .attach-item .lbl{display:flex; flex-direction:column; gap:1px;}
+  .attach-item .lbl small{color:rgb(var(--muted)); font-weight:400; font-size:11px;}
+  .attach-item.active{background:rgba(99,102,241,0.1); color:rgb(var(--primary));}
+  .attach-item.active .lbl small{color:rgb(var(--primary)); opacity:0.7;}
+
+  /* ── Mode chip ── */
+  .mode-chip{display:inline-flex; align-items:center; gap:4px; font-size:12px; font-weight:500;
+    color:rgb(var(--primary)); background:rgba(99,102,241,0.1); border:1px solid rgba(99,102,241,0.25);
+    border-radius:999px; padding:3px 8px 3px 10px; margin-bottom:6px;}
+  .mode-chip button{background:none; border:none; color:rgb(var(--primary)); cursor:pointer; font-size:13px;
+    line-height:1; padding:0; margin-left:2px; opacity:0.7;}
+  .mode-chip button:hover{opacity:1;}
+
+  /* ── Mic button active ── */
+  .mic-active{color:rgb(var(--primary)) !important;}
+
+  /* ── Source chips ── */
+  .source-chip{font-size:11px; color:rgb(var(--primary)); background:rgba(99,102,241,0.08);
+    border:1px solid rgba(99,102,241,0.2); border-radius:6px; padding:3px 7px; display:inline-block;}
+
+  /* ── Chat history sidebar ── */
+  .chat-history-item{display:flex; align-items:center; justify-content:space-between; gap:6px;
+    font-size:12px; color:rgb(var(--muted)); border-radius:6px;
+    padding:6px 8px; cursor:pointer; transition:background .15s, border-color .15s;
+    border:1px solid transparent;}
+  .chat-history-item:hover{color:rgb(var(--fg)); border-color:rgb(var(--border));}
+  .chat-history-item.active{border-color:rgb(var(--primary)); color:rgb(var(--fg)); background:rgba(99,102,241,0.06);}
+  .chat-history-main{flex:1; min-width:0; overflow:hidden;}
+  .chat-history-title{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500;}
+  .chat-history-date{font-size:10.5px; opacity:.7; margin-top:1px;}
+  .chat-history-delete{background:none; border:none; color:rgb(var(--muted)); cursor:pointer;
+    opacity:0; transition:opacity .15s, color .15s; font-size:13px; padding:2px 4px; flex-shrink:0;}
+  .chat-history-item:hover .chat-history-delete{opacity:1;}
+  .chat-history-delete:hover{color:rgb(var(--primary));}
+
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "marked": "https://esm.sh/marked@12.0.2"
+  }
+}
+</script>
+
+<script type="module">
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createRoot } from 'react-dom/client';
+import { marked } from 'marked';
+
+const h = React.createElement;
+const API_BASE = window.RESONA_API_BASE || '';
+
+// ===== EXISTING API HELPERS =====
+async function fetchReports() {
+  try {
+    const r = await fetch(`${API_BASE}/api/reports`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.reports || []).map((rep, i) => ({
+      id: rep.filename || String(i),
+      title: rep.name || rep.filename || 'Untitled',
+      created_at: rep.date || '',
+      filename: rep.filename,
+      has_pdf: rep.has_pdf || false,
+    }));
+  } catch { return []; }
+}
+
+async function fetchMemoryTopics() {
+  try {
+    const r = await fetch(`${API_BASE}/memory/topics`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return data.topics || [];
+  } catch { return []; }
+}
+
+async function fetchReportContent(filename) {
+  try {
+    const r = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(filename)}`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+const eventAccum = { eventType: 'message', dataLines: [] };
+
+function handleSSELine(line, accum, onEvent) {
+  if (line.startsWith('event:')) {
+    if (accum.dataLines.length > 0) {
+      const ev = buildSSEEvent(accum.eventType, accum.dataLines.join('\n'));
+      if (ev) onEvent(ev);
+      accum.dataLines = [];
+    }
+    accum.eventType = line.slice(6).trim();
+  } else if (line.startsWith('data:')) {
+    accum.dataLines.push(line.slice(5).trim());
+  } else if (!line.trim() && accum.dataLines.length > 0) {
+    const ev = buildSSEEvent(accum.eventType, accum.dataLines.join('\n'));
+    if (ev) onEvent(ev);
+    accum.dataLines = [];
+    accum.eventType = 'message';
+  }
+}
+
+function buildSSEEvent(eventType, dataStr) {
+  let p = {};
+  try { p = dataStr ? JSON.parse(dataStr) : {}; } catch { p = { raw: dataStr }; }
+  switch (eventType) {
+    case 'phase': return { type: 'phase', phase: p.phase || p.name || '', status: p.status || 'running', message: p.message || '' };
+    case 'content_start': return { type: 'content_start' };
+    case 'chunk': return { type: 'chunk', text: p.text || p.delta || p.content || '' };
+    case 'complete': return { type: 'complete', report: p };
+    case 'error': return { type: 'error', message: p.message || 'Unknown error' };
+    case 'token': return { type: 'token', text: p.text || '' };
+    case 'done': return { type: 'done', sources: p.sources || [] };
+    default: return null;
+  }
+}
+
+// ===== CHAT API HELPERS =====
+async function createChatSession() {
+  const r = await fetch(`${API_BASE}/api/chat/session`, { method: 'POST' });
+  if (!r.ok) throw new Error('Failed to create session');
+  return (await r.json()).session_id;
+}
+
+async function getChatHistory(sessionId) {
+  const r = await fetch(`${API_BASE}/api/chat/history/${sessionId}`);
+  if (!r.ok) return { messages: [], documents: [] };
+  return await r.json();
+}
+
+// ── Chat session persistence (localStorage) ──
+const SESSIONS_KEY = 'resona_sessions';
+
+function loadSessionList() {
+  try { return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]'); } catch { return []; }
+}
+
+function saveSessionList(sessions) {
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+}
+
+async function uploadChatDocument(sessionId, file, onProgress) {
+  const fd = new FormData();
+  fd.append('session_id', sessionId);
+  fd.append('file', file);
+  const r = await fetch(`${API_BASE}/api/chat/documents`, { method: 'POST', body: fd });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(err.detail || 'Upload failed');
+  }
+  return await r.json();
+}
+
+// ===== ICONS =====
+const Icon = ({ d, size = 16, stroke = 2 }) =>
+  h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round', strokeLinejoin: 'round' },
+    Array.isArray(d) ? d.map((p, i) => h('path', { key: i, d: p })) : h('path', { d }));
+const I = {
+  plus:    () => h(Icon, { d: ['M12 5v14', 'M5 12h14'] }),
+  menu:    () => h(Icon, { d: ['M3 6h18','M3 12h18','M3 18h18'] }),
+  send:    () => h(Icon, { d: ['M12 19V5','M5 12l7-7 7 7'], stroke: 2.5 }),
+  stop:    () => h('svg', { width:14, height:14, viewBox:'0 0 24 24', fill:'currentColor' }, h('rect',{x:6,y:6,width:12,height:12,rx:1})),
+  copy:    () => h(Icon, { d: ['M9 9h10v10H9z','M5 15V5h10'] }),
+  check:   () => h(Icon, { d: 'M5 13l4 4L19 7' }),
+  refresh: () => h(Icon, { d: ['M3 12a9 9 0 0 1 15-6.7L21 8','M21 3v5h-5','M21 12a9 9 0 0 1-15 6.7L3 16','M3 21v-5h5'] }),
+  download:() => h(Icon, { d: ['M12 3v12','M7 10l5 5 5-5','M5 21h14'] }),
+  sparkle: () => h(Icon, { d: 'M12 3l1.9 4.8L18.7 9.7l-4.8 1.9L12 16.4l-1.9-4.8L5.3 9.7l4.8-1.9L12 3z' }),
+  sun:     () => h(Icon, { d: ['M12 4V2','M12 22v-2','M4.93 4.93l1.41 1.41','M17.66 17.66l1.41 1.41','M2 12h2','M20 12h2','M4.93 19.07l1.41-1.41','M17.66 6.34l1.41-1.41','M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z'] }),
+  moon:    () => h(Icon, { d: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z' }),
+  doc:     () => h(Icon, { d: ['M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z','M14 3v6h6'] }),
+  book:    () => h(Icon, { d: ['M4 19.5A2.5 2.5 0 0 1 6.5 17H20','M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z'] }),
+  load:    () => h(Icon, { d: ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4','M7 9l5 5 5-5','M12 14V3'] }),
+  mic:     () => h(Icon, { d: ['M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z','M19 10v2a7 7 0 0 1-14 0v-2','M12 19v3','M9 22h6'] }),
+};
+
+// ===== COMPONENTS =====
+
+// ── Mode chip ──
+function ModeChip({ onDismiss }) {
+  return h('div', { className: 'mode-chip message-in' },
+    '🔎 Deep Research',
+    h('button', { onClick: onDismiss, title: 'Switch to chat' }, '✕')
+  );
+}
+
+// ── Sidebar ──
+function Sidebar({ collapsed, onToggle, onNewChat, reports, memories, theme, onToggleTheme, onLoadReport, onMemoryResearch, mobileOpen, onMobileClose, chatSessions, activeSessionId, onSwitchSession, onDeleteSession, onDeleteReport }) {
+  const headerRow = h('div', { className: 'flex items-center gap-2 px-3 h-14 border-b border-border shrink-0' },
+    h('button', { type: 'button', onClick: onToggle, className: 'p-2 rounded-md hover:bg-surface-hover text-muted' }, h(I.menu)),
+    h('div', { className: 'flex items-center gap-2' },
+      h('div', { className: 'w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center text-primary-fg text-sm font-bold shrink-0' }, 'R'),
+      h('span', { className: 'text-sm font-semibold tracking-tight' }, 'Resona')
+    )
+  );
+
+  const newChatBtn = h('div', { className: 'p-3' },
+    h('button', {
+      type: 'button',
+      onClick: () => { onNewChat(); onMobileClose && onMobileClose(); },
+      className: 'w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-border bg-surface hover:bg-surface-hover text-sm font-medium transition'
+    }, h(I.plus), 'New chat')
+  );
+
+  const contentArea = h('div', { className: 'flex-1 overflow-y-auto scroll-thin px-2' },
+    // ── Chats section ──
+    h('div', { className: 'text-[11px] font-medium text-muted px-2 mt-2 mb-1' }, 'Chats'),
+    chatSessions.length === 0
+      ? h('div', { className: 'text-xs text-muted px-2 py-1.5' }, 'No chats yet')
+      : chatSessions.sort((a, b) => b.updatedAt - a.updatedAt).map(s =>
+          h('div', {
+            key: s.id,
+            className: 'chat-history-item' + (s.id === activeSessionId ? ' active' : '')
+          },
+            h('div', { className: 'chat-history-main', onClick: () => onSwitchSession(s.id) },
+              h('div', { className: 'chat-history-title' }, s.title),
+              h('div', { className: 'chat-history-date' }, new Date(s.updatedAt).toLocaleDateString())
+            ),
+            h('button', {
+              className: 'chat-history-delete',
+              title: 'Delete this chat',
+              onClick: (e) => { e.stopPropagation(); onDeleteSession(s.id); }
+            }, '\u{1F5D1}')
+          )
+        ),
+    // ── Report History section ──
+    h('div', { className: 'text-[11px] font-medium text-muted px-2 mt-4 mb-1' }, 'Report History'),
+    reports.length === 0
+      ? h('div', { className: 'text-xs text-muted px-2 py-3' }, 'No reports yet')
+      : reports.map(r => h('div', {
+          key: r.id,
+          className: 'chat-history-item'
+        },
+          h('div', { className: 'chat-history-main', onClick: () => { onLoadReport(r); onMobileClose && onMobileClose(); } },
+            h('div', { className: 'chat-history-title' }, r.title || 'Untitled'),
+            h('div', { className: 'chat-history-date' }, r.created_at || '')
+          ),
+          h('button', {
+            className: 'chat-history-delete',
+            title: 'Delete this report',
+            onClick: (e) => { e.stopPropagation(); onDeleteReport(r.filename); }
+          }, '\u{1F5D1}')
+        )),
+    memories.length > 0 && h('div', { className: 'text-[11px] font-medium text-muted px-2 mt-4 mb-1' }, 'Memory Topics'),
+    memories.length > 0 && memories.map(t => h('button', {
+        key: t,
+        onClick: () => { onMemoryResearch(t); onMobileClose && onMobileClose(); },
+        className: 'w-full text-left px-2.5 py-1.5 rounded-md hover:bg-surface-hover text-xs text-muted flex items-center gap-2'
+      },
+        h('span', { className: 'w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0' }),
+        h('span', { className: 'truncate' }, t)
+      ))
+  );
+
+  const footer = h('div', { className: 'border-t border-border p-3 flex items-center justify-between shrink-0' },
+    h('button', {
+      onClick: onToggleTheme,
+      className: 'p-1.5 rounded-md hover:bg-surface-hover text-muted'
+    }, theme === 'dark' ? h(I.sun, { size: 15 }) : h(I.moon, { size: 15 }))
+  );
+
+  const mobileContent = [headerRow, newChatBtn, contentArea, footer];
+  const desktopContent = collapsed ? [headerRow] : [headerRow, newChatBtn, contentArea, footer];
+
+  return [
+    h('aside', {
+      key: 'desktop',
+      className: 'desktop-sidebar shrink-0 transition-all duration-300 border-r border-border bg-surface/40 flex flex-col ' + (collapsed ? 'w-14' : 'w-64'),
+    }, ...desktopContent),
+    h('div', { key: 'overlay', className: 'sidebar-overlay' + (mobileOpen ? ' open' : ''), onClick: onMobileClose }),
+    h('aside', { key: 'mobile', className: 'sidebar-drawer border-r border-border bg-surface flex flex-col' + (mobileOpen ? ' open' : '') }, ...mobileContent),
+  ];
+}
+
+// ── EmptyState ──
+function EmptyState({ onPick }) {
+  const items = [
+    { icon: I.book, label: 'Market analysis', desc: 'Latest trends in AI infrastructure investments' },
+    { icon: I.doc, label: 'Scientific deep dive', desc: 'State of CRISPR gene editing in 2025' },
+    { icon: I.book, label: 'Geopolitics', desc: 'Implications of the EU AI Act for global startups' },
+    { icon: I.doc, label: 'Technology landscape', desc: 'Compare modern vector databases' },
+  ];
+  return h('div', { className: 'flex flex-col items-center justify-center px-6 py-12 max-w-3xl mx-auto w-full' },
+    h('div', { className: 'w-14 h-14 rounded-2xl grid place-items-center bg-gradient-to-br from-primary to-primary/60 text-primary-fg shadow-lg shadow-primary/20 mb-5' }, h(I.sparkle)),
+    h('h1', { className: 'text-2xl font-semibold tracking-tight' }, 'Resona'),
+    h('p', { className: 'mt-2 text-[15px] text-muted text-center' }, 'Chat naturally, or use \u{1F50D} Deep Research for a cited report.'),
+    h('div', { className: 'grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-10 w-full' },
+      items.map(it => h('button', {
+        key: it.label,
+        onClick: () => onPick(it.desc),
+        className: 'text-left p-4 rounded-xl border border-border bg-surface hover:bg-surface-hover hover:border-primary/40 transition'
+      },
+        h('div', { className: 'flex items-start gap-3' },
+          h('div', { className: 'p-1.5 rounded-md border border-border text-primary' }, h(it.icon)),
+          h('div', null,
+            h('div', { className: 'text-[13px] font-medium' }, it.label),
+            h('div', { className: 'text-[12.5px] text-muted mt-0.5' }, it.desc)
+          )
+        )
+      ))
+    )
+  );
+}
+
+// ── UserMessage ──
+function UserMessage({ content }) {
+  return h('div', { className: 'message-in flex justify-end' },
+    h('div', { className: 'max-w-[78%] rounded-2xl rounded-tr-md bg-primary text-primary-fg px-4 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap' }, content)
+  );
+}
+
+// ── AssistantMessage (w/ source chips) ──
+function AssistantMessage({ message, onRegenerate }) {
+  const [copied, setCopied] = useState(false);
+  const streaming = message.status === 'streaming';
+  const html = message.content ? marked.parse(message.content, { breaks: true }) : '';
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const download = () => {
+    const w = window.open('', '_blank'); if (!w) return;
+    w.document.write(`<html><head><title>Resona Report</title>
+      <style>body{font-family:Inter,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.7;color:#222}</style>
+      </head><body>${marked.parse(message.content)}</body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 200);
+  };
+
+  return h('div', { className: 'message-in' },
+    streaming && message.phase && h('div', { className: 'text-[12px] text-muted mb-3 flex items-center gap-2' },
+      h('span', { className: 'thinking-dot' }),
+      h('span', { className: 'thinking-dot', style: { animationDelay: '.2s' } }),
+      h('span', { className: 'thinking-dot', style: { animationDelay: '.4s' } }),
+      h('span', { className: 'ml-1' }, message.phase)
+    ),
+    message.content
+      ? h('div', { className: 'prose-resona', dangerouslySetInnerHTML: { __html: html } })
+      : streaming && h('div', { className: 'flex items-center gap-1.5 py-2' },
+          h('span', { className: 'thinking-dot' }),
+          h('span', { className: 'thinking-dot', style: { animationDelay: '.2s' } }),
+          h('span', { className: 'thinking-dot', style: { animationDelay: '.4s' } })
+        ),
+    message.sources && message.sources.length > 0 && h('div', { className: 'flex flex-wrap gap-1.5 mt-3' },
+      message.sources.map((s, i) => h('span', { key: i, className: 'source-chip' }, `\u{1F4C4} ${s.source}`))
+    ),
+    !streaming && message.content && h('div', { className: 'mt-4 flex items-center gap-1 text-muted' },
+      h('button', { onClick: copy, title: 'Copy', className: 'p-1.5 rounded-md hover:bg-surface hover:text-foreground' }, copied ? h(I.check) : h(I.copy)),
+      h('button', { onClick: download, title: 'Download', className: 'p-1.5 rounded-md hover:bg-surface hover:text-foreground' }, h(I.download)),
+      onRegenerate && h('button', { onClick: onRegenerate, title: 'Regenerate', className: 'p-1.5 rounded-md hover:bg-surface hover:text-foreground' }, h(I.refresh))
+    )
+  );
+}
+
+// ── Attach menu (rendered inside InputBar) ──
+function AttachMenu({ open, onClose, onUploadClick, onResearchToggle, onVoiceToggle, voiceActive, researchActive }) {
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) onClose();
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return h('div', { ref: menuRef, className: 'attach-menu open' },
+    h('div', { className: 'text-[10.5px] uppercase tracking-wider text-muted px-[10px] pb-[6px] pt-[2px] font-semibold' }, 'Tools & Attachments'),
+    h('div', { className: 'attach-item', onClick: () => { onUploadClick(); onClose(); } },
+      h('span', { className: 'ico' }, '\u{1F4CE}'),
+      h('span', { className: 'lbl' }, 'Upload file', h('small', null, '.pdf \u00b7 .docx \u00b7 .txt \u00b7 .md \u2014 chat with it'))
+    ),
+    h('div', { className: 'attach-item' + (researchActive ? ' active' : ''), onClick: () => { onResearchToggle(); onClose(); } },
+      h('span', { className: 'ico' }, '\u{1F50D}'),
+      h('span', { className: 'lbl' }, 'Deep Research', h('small', null, 'Multi-step, cited, self-verified report'))
+    ),
+    h('div', { className: 'attach-item' + (voiceActive ? ' active' : ''), onClick: () => { onVoiceToggle(); onClose(); } },
+      h('span', { className: 'ico' }, '\u{1F50A}'),
+      h('span', { className: 'lbl' }, 'Read replies aloud', h('small', null, 'Speaks each reply as it finishes'))
+    )
+  );
+}
+
+// ── InputBar (with + menu, mic) ──
+function InputBar({ value, onChange, onSubmit, onStop, isStreaming, mode, voiceOut, onModeChange, onVoiceOutChange, onUploadClick }) {
+  const ref = useRef(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  }, [value]);
+
+  // Voice input
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    const r = new SpeechRecognition();
+    r.continuous = false;
+    r.interimResults = false;
+    r.lang = 'en-US';
+    r.onresult = (e) => {
+      const t = e.results[0][0].transcript;
+      onChange((p) => (p ? p + ' ' : '') + t);
+    };
+    r.onend = () => setListening(false);
+    r.onerror = () => setListening(false);
+    recognitionRef.current = r;
+  }, [onChange]);
+
+  const micBtn = recognitionRef.current
+    ? h('button', {
+        type: 'button',
+        onClick: () => {
+          if (listening) { recognitionRef.current.stop(); setListening(false); return; }
+          setListening(true);
+          recognitionRef.current.start();
+        },
+        title: listening ? 'Stop listening' : 'Voice input',
+        className: 'shrink-0 grid place-items-center w-9 h-9 rounded-lg hover:bg-surface-hover text-muted hover:text-foreground transition ' + (listening ? 'mic-active' : '')
+      }, h(I.mic))
+    : null;
+
+  // Hidden file input for upload
+  const hiddenFileInput = h('input', {
+    ref: fileInputRef,
+    type: 'file',
+    accept: '.pdf,.docx,.txt,.md',
+    style: { display: 'none' },
+    onChange: (e) => {
+      if (e.target.files.length) onUploadClick(e.target.files[0]);
+    }
+  });
+
+  return h('div', { className: 'max-w-3xl mx-auto w-full' },
+    // Mode chip
+    mode === 'research' && h('div', { className: 'px-1' }, h(ModeChip, { onDismiss: () => onModeChange('chat') })),
+
+    h('form', {
+      onSubmit: (e) => { e.preventDefault(); if (!isStreaming && value.trim()) onSubmit(); },
+      className: 'relative flex items-end gap-1.5 rounded-2xl border border-border bg-surface focus-within:border-primary/50 p-2 pl-3 shadow-lg shadow-black/20'
+    },
+      // + button with attach menu
+      h('div', { className: 'attach-wrap' },
+        h('button', {
+          type: 'button',
+          onClick: (e) => { e.stopPropagation(); setAttachOpen(!attachOpen); },
+          title: 'Tools: upload files, deep research, voice replies',
+          'aria-label': 'Open tools menu: upload files, deep research, voice replies',
+          className: 'shrink-0 grid place-items-center w-9 h-9 rounded-lg hover:bg-surface-hover text-muted hover:text-foreground transition text-lg'
+        }, '+'),
+        h(AttachMenu, {
+          open: attachOpen,
+          onClose: () => setAttachOpen(false),
+          onUploadClick: () => fileInputRef.current?.click(),
+          onResearchToggle: () => onModeChange(mode === 'research' ? 'chat' : 'research'),
+          onVoiceToggle: () => onVoiceOutChange(!voiceOut),
+          voiceActive: voiceOut,
+          researchActive: mode === 'research',
+        })
+      ),
+
+      // Mic button
+      micBtn,
+
+      // Textarea
+      h('textarea', {
+        ref,
+        value,
+        onChange: (e) => onChange(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (!isStreaming && value.trim()) onSubmit();
+          }
+        },
+        id: 'query-input',
+        name: 'query',
+        placeholder: mode === 'research' ? 'Give Resona a research topic\u2026' : 'Message Resona\u2026',
+        rows: 1,
+        className: 'flex-1 resize-none bg-transparent outline-none text-[15px] leading-relaxed py-1.5 placeholder:text-muted/70 max-h-[200px]'
+      }),
+
+      // Send/Stop button
+      isStreaming
+        ? h('button', { type: 'button', onClick: onStop, title: 'Stop',
+            className: 'shrink-0 grid place-items-center w-9 h-9 rounded-xl bg-foreground text-background hover:opacity-90' }, h(I.stop))
+        : h('button', { type: 'submit', disabled: !value.trim(), title: 'Send',
+            className: 'shrink-0 grid place-items-center w-9 h-9 rounded-xl bg-primary text-primary-fg disabled:opacity-40 hover:opacity-90' }, h(I.send))
+    ),
+    h('p', { className: 'text-[11px] text-muted/70 text-center mt-2' }, 'Resona may produce inaccurate information. Verify important facts.'),
+
+    // Hidden file input
+    hiddenFileInput
+  );
+}
+
+// ===== APP =====
+const PHASE = { researching: 'Researching', analyzing: 'Analyzing', writing: 'Writing', planning: 'Planning', verifying: 'Verifying' };
+const prettyPhase = (p) => PHASE[String(p).toLowerCase()] || (p.charAt(0).toUpperCase() + p.slice(1));
+
+function App() {
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [streaming, setStreaming] = useState(false);
+  const [reports, setReports] = useState([]);
+  const [memories, setMemories] = useState([]);
+  const abortRef = useRef(null);
+  const scrollRef = useRef(null);
+  const [lastPdfData, setLastPdfData] = useState(null);
+
+  // ── New chat state ──
+  const [mode, setMode] = useState('chat'); // 'chat' | 'research'
+  const [voiceOut, setVoiceOut] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [chatStreamText, setChatStreamText] = useState('');
+  const [chatSessions, setChatSessions] = useState(() => loadSessionList());
+  const [sessionDocs, setSessionDocs] = useState([]);
+  const [uploadStatus, setUploadStatus] = useState(null); // { name, state: 'uploading'|'done'|'error', message }
+
+  const refreshChatSessions = useCallback(() => {
+    setChatSessions(loadSessionList());
+  }, []);
+
+  // ── Session bootstrap ──
+  useEffect(() => {
+    initSession();
+  }, []);
+
+  async function initSession() {
+    const stored = localStorage.getItem('resona_session_id');
+    if (stored) {
+      try {
+        const data = await getChatHistory(stored);
+        setSessionId(stored);
+        if (data.messages && data.messages.length) {
+          const restored = data.messages.map(m => ({
+            id: crypto.randomUUID(),
+            role: m.role,
+            content: m.content,
+            status: 'complete',
+          }));
+          setMessages(restored);
+        }
+        setSessionDocs(data.documents || []);
+      } catch {
+        await createNewSession();
+      }
+    } else {
+      await createNewSession();
+    }
+    refreshChatSessions();
+  }
+
+  async function createNewSession() {
+    try {
+      const sid = await createChatSession();
+      setSessionId(sid);
+      localStorage.setItem('resona_session_id', sid);
+    } catch (e) {
+      console.error('Failed to create session', e);
+    }
+  }
+
+  // ── Theme side effect ──
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.toggle('light', theme === 'light');
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  // ── Fetch reports / memories ──
+  const refreshReports = useCallback(() => { fetchReports().then(setReports); }, []);
+  const refreshMemories = useCallback(() => { fetchMemoryTopics().then(setMemories); }, []);
+  useEffect(() => { refreshReports(); refreshMemories(); }, [refreshReports, refreshMemories]);
+
+  // ── Auto-scroll ──
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, chatStreamText]);
+
+  // ── Handle load report ──
+  const handleLoadReport = useCallback(async (report) => {
+    if (streaming) return;
+    const data = await fetchReportContent(report.filename);
+    if (!data || data.error) return;
+    setMessages([
+      { id: crypto.randomUUID(), role: 'user', content: '\u{1F4C2} Loaded: ' + (data.topic || report.title) },
+      { id: crypto.randomUUID(), role: 'assistant', content: data.content, status: 'complete' },
+    ]);
+  }, [streaming]);
+
+  // ── Handle memory topic click ──
+  const handleMemoryResearch = useCallback((topic) => {
+    if (streaming) return;
+    setInput(topic);
+    setMode('research');
+  }, [streaming]);
+
+  // ── New chat ──
+  const newChat = async () => {
+    if (streaming) abortRef.current?.abort();
+    setMode('chat');
+    setMessages([]);
+    setInput('');
+    setLastPdfData(null);
+    setSessionDocs([]);
+    await createNewSession();
+    refreshChatSessions();
+  };
+
+  // ── Switch to a different session ──
+  async function switchToSession(id) {
+    if (streaming) abortRef.current?.abort();
+    setSessionId(id);
+    localStorage.setItem('resona_session_id', id);
+    try {
+      const data = await getChatHistory(id);
+      if (data.messages && data.messages.length) {
+        const restored = data.messages.map(m => ({
+          id: crypto.randomUUID(),
+          role: m.role,
+          content: m.content,
+          status: 'complete',
+        }));          setMessages(restored);
+        } else {
+          setMessages([]);
+        }
+        setSessionDocs(data.documents || []);
+      } catch {
+        setMessages([]);
+      }
+    setMode('chat');
+    setInput('');
+    setLastPdfData(null);
+    refreshChatSessions();
+  }
+
+  // ── Delete a session ──
+  async function deleteSessionById(id) {
+    if (!confirm('Delete this chat? This cannot be undone.')) return;
+    try {
+      await fetch(`${API_BASE}/api/chat/session/${id}`, { method: 'DELETE' });
+    } catch (e) {
+      console.error('Failed to delete session on server:', e);
+    }
+    const remaining = loadSessionList().filter(s => s.id !== id);
+    saveSessionList(remaining);
+    if (id === sessionId) {
+      // Deleted the active session — start a fresh one
+      setMessages([]);
+      setInput('');
+      setLastPdfData(null);
+      await createNewSession();
+    }
+    refreshChatSessions();
+  }
+
+  // ── Submit: dispatch by mode ──
+  const handleSubmit = useCallback(async (override) => {
+    const q = (override ?? input).trim();
+    if (!q || streaming) return;
+    setInput('');
+
+    if (mode === 'chat') {
+      await sendChatMessage(q);
+    } else {
+      await sendResearchMessage(q);
+    }
+  }, [input, mode, streaming, sessionId, voiceOut]);
+
+  // ── Local helper for processing a built SSE event during chat streaming ──
+  function applyChatEvent(ev, state) {
+    // state = { fullText, sources, sawEvent, asstId } — mutates in place
+    if (!ev) return;
+    state.sawEvent = true;
+    if (ev.type === 'token') {
+      state.fullText += ev.text;
+      setMessages(m => m.map(msg =>
+        msg.id === state.asstId ? { ...msg, content: state.fullText } : msg
+      ));
+    } else if (ev.type === 'done') {
+      state.sources = ev.sources || [];
+    } else if (ev.type === 'error') {
+      state.fullText += `\n\n⚠️ ${ev.message}`;
+      setMessages(m => m.map(msg =>
+        msg.id === state.asstId ? { ...msg, content: state.fullText } : msg
+      ));
+    }
+  }
+
+  // ── Chat message streaming ──
+  async function sendChatMessage(text) {
+    // Local accumulator per call — avoids corrupting state if two chat
+    // sends ever overlap (the module-level singleton this replaced was
+    // shared across every call, unlike sendResearchMessage's local `accum`).
+    const chatAccum = { eventType: 'message', dataLines: [] };
+
+    const userId = crypto.randomUUID();
+    const asstId = crypto.randomUUID();
+    setMessages(m => [...m,
+      { id: userId, role: 'user', content: text },
+      { id: asstId, role: 'assistant', content: '', status: 'streaming' }
+    ]);
+    setStreaming(true);
+    const state = { fullText: '', sources: [], sawEvent: false, asstId };
+
+    // Register this session in localStorage chat history (first message triggers the entry)
+    if (sessionId) {
+      const sessions = loadSessionList();
+      const existing = sessions.find(s => s.id === sessionId);
+      if (existing) {
+        existing.updatedAt = Date.now();
+      } else {
+        sessions.push({
+          id: sessionId,
+          title: text.slice(0, 40) + (text.length > 40 ? '\u2026' : ''),
+          updatedAt: Date.now(),
+        });
+      }
+      saveSessionList(sessions);
+      refreshChatSessions();
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, message: text, voice: voiceOut }),
+      });
+      if (!res.ok) {
+        // Non-SSE JSON error from backend (e.g. 422 on missing session_id)
+        let detail = `HTTP ${res.status}`;
+        try { const j = await res.json(); if (j.detail) detail = j.detail; } catch {}
+        setMessages(m => m.map(msg =>
+          msg.id === asstId ? { ...msg, content: `⚠️ ${detail}`, status: 'error' } : msg
+        ));
+        setStreaming(false);
+        return;
+      }
+
+      if (!res.body) {
+        setMessages(m => m.map(msg =>
+          msg.id === asstId ? { ...msg, content: '⚠️ Empty response from server', status: 'error' } : msg
+        ));
+        setStreaming(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      // SSE parsing: line-by-line approach (handles both \n and \r\n line endings).
+      // Same strategy as the research mode parser — the original `split('\n\n')`
+      // never matched `\r\n\r\n` event separators from sse_starlette, so
+      // events were silently swallowed.
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        while (true) {
+          const idx = buffer.indexOf('\n');
+          if (idx === -1) break;
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+
+          if (line.startsWith('event:')) {
+            // Previous event complete — flush it
+            if (chatAccum.dataLines.length > 0) {
+              const ev = buildSSEEvent(chatAccum.eventType, chatAccum.dataLines.join('\n'));
+              applyChatEvent(ev, state);
+              chatAccum.dataLines = [];
+            }
+            chatAccum.eventType = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            chatAccum.dataLines.push(line.slice(5).trim());
+          } else if (!line.trim() && chatAccum.dataLines.length > 0) {
+            // Empty line = event boundary
+            const ev = buildSSEEvent(chatAccum.eventType, chatAccum.dataLines.join('\n'));
+            applyChatEvent(ev, state);
+            chatAccum.dataLines = [];
+            chatAccum.eventType = 'message';
+          }
+        }
+      }
+
+      // Flush remaining buffer (last event may not have had a trailing blank line)
+      if (chatAccum.dataLines.length > 0) {
+        const ev = buildSSEEvent(chatAccum.eventType, chatAccum.dataLines.join('\n'));
+        applyChatEvent(ev, state);
+      }
+
+      // Finalize
+      if (!state.sawEvent) {
+        setMessages(m => m.map(msg =>
+          msg.id === asstId ? { ...msg, content: '⚠️ No valid response received — check the server logs.', status: 'error' } : msg
+        ));
+      } else {
+        setMessages(m => m.map(msg =>
+          msg.id === asstId ? { ...msg, status: 'complete', sources: state.sources, content: state.fullText || '_(No response)_' } : msg
+        ));
+      }
+
+      if (voiceOut && state.fullText.trim() && 'speechSynthesis' in window) {
+        speechSynthesis.speak(new SpeechSynthesisUtterance(state.fullText));
+      }
+    } catch (e) {
+      setMessages(m => m.map(msg =>
+        msg.id === asstId ? { ...msg, content: `⚠️ ${e.message}`, status: 'error' } : msg
+      ));
+    } finally {
+      setStreaming(false);
+    }
+  }
+
+  // ── Research message streaming ──
+  async function sendResearchMessage(q) {
+    const userId = crypto.randomUUID();
+    const asstId = crypto.randomUUID();
+    setMessages(m => [...m,
+      { id: userId, role: 'user', content: q },
+      { id: asstId, role: 'assistant', content: '', status: 'streaming', phase: 'Researching' }
+    ]);
+    setStreaming(true);
+    setLastPdfData(null);
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: JSON.stringify({
+          topic: q,
+          format: 'markdown+pdf',
+          depth: 'standard',
+          model: 'llama-3.1-8b-instant',
+          mode: 'langgraph',
+        }),
+        signal: ctrl.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        setMessages(m => m.map(msg =>
+          msg.id === asstId ? { ...msg, content: `Request failed: ${res.status}`, status: 'error' } : msg
+        ));
+        setStreaming(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const accum = { eventType: 'message', dataLines: [] };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        while (true) {
+          const idx = buffer.indexOf('\n');
+          if (idx === -1) break;
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          handleSSELine(line, accum, (ev) => {
+            switch (ev.type) {
+              case 'phase':
+                setMessages(m => m.map(msg =>
+                  msg.id === asstId ? { ...msg, phase: prettyPhase(ev.phase) } : msg
+                ));
+                break;
+              case 'content_start':
+                setMessages(m => m.map(msg =>
+                  msg.id === asstId ? { ...msg, phase: undefined } : msg
+                ));
+                break;
+              case 'chunk':
+                setMessages(m => m.map(msg =>
+                  msg.id === asstId ? { ...msg, content: (msg.content || '') + ev.text } : msg
+                ));
+                break;
+              case 'complete':
+                setMessages(m => m.map(msg =>
+                  msg.id === asstId
+                    ? { ...msg, content: ev.report?.markdown || msg.content, status: 'complete', phase: undefined }
+                    : msg
+                ));
+                setLastPdfData(ev.report);
+                refreshReports();
+                refreshMemories();
+                break;
+              case 'error':
+                setMessages(m => m.map(msg =>
+                  msg.id === asstId
+                    ? { ...msg, content: (msg.content || '') + `\n\n> **Error:** ${ev.message}`, status: 'error', phase: undefined }
+                    : msg
+                ));
+                break;
+            }
+          });
+        }
+      }
+      // Flush remaining
+      if (accum.dataLines.length > 0) {
+        const ev = buildSSEEvent(accum.eventType, accum.dataLines.join('\n'));
+        if (ev && ev.type === 'complete') {
+          setMessages(m => m.map(msg =>
+            msg.id === asstId ? { ...msg, status: 'complete', phase: undefined, content: ev.report?.markdown || msg.content } : msg
+          ));
+          setLastPdfData(ev.report);
+          refreshReports();
+          refreshMemories();
+        }
+      }
+      setMessages(m => m.map(msg =>
+        msg.id === asstId && msg.status === 'streaming' ? { ...msg, status: 'complete' } : msg
+      ));
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        setMessages(m => m.map(msg =>
+          msg.id === asstId ? { ...msg, status: 'complete', content: msg.content || '_Request stopped._' } : msg
+        ));
+      } else {
+        setMessages(m => m.map(msg =>
+          msg.id === asstId ? { ...msg, content: `Error: ${err.message}`, status: 'error' } : msg
+        ));
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }
+
+  // ── Report delete handler ──
+  async function handleDeleteReport(filename) {
+    if (!confirm('Delete this report? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/reports/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+      refreshReports();
+    } catch (e) {
+      console.error('Failed to delete report:', e);
+    }
+  }
+
+  // ── Document upload handler (from + menu) ──
+  async function handleUpload(file) {
+    if (!sessionId) return;
+    setUploadStatus({ name: file.name, state: 'uploading' });
+    try {
+      await uploadChatDocument(sessionId, file);
+      setSessionDocs(docs => docs.includes(file.name) ? docs : [...docs, file.name]);
+      setUploadStatus({ name: file.name, state: 'done' });
+      setTimeout(() => setUploadStatus(s => (s && s.name === file.name ? null : s)), 2500);
+    } catch (e) {
+      console.error('Upload error', e);
+      setUploadStatus({ name: file.name, state: 'error', message: e.message });
+    }
+  }
+
+  // ── Stop handler ──
+  const stop = () => abortRef.current?.abort();
+
+  // ── Regenerate handler (research only) ──
+  const regenerate = (idx) => {
+    const prevUser = [...messages.slice(0, idx)].reverse().find(m => m.role === 'user');
+    if (!prevUser) return;
+    setMessages(m => m.slice(0, idx));
+    handleSubmit(prevUser.content);
+  };
+
+  // ── Render ──
+  return h('div', { className: 'flex h-screen w-full overflow-hidden' },
+    h(Sidebar, {
+      collapsed,
+      onToggle: () => setCollapsed(c => !c),
+      mobileOpen,
+      onMobileClose: () => setMobileOpen(false),
+      onNewChat: newChat,
+      reports,
+      memories,
+      theme,
+      onToggleTheme: () => setTheme(t => t === 'dark' ? 'light' : 'dark'),
+      onLoadReport: handleLoadReport,
+      onMemoryResearch: handleMemoryResearch,
+      chatSessions,
+      activeSessionId: sessionId,
+      onSwitchSession: switchToSession,
+      onDeleteSession: deleteSessionById,
+      onDeleteReport: handleDeleteReport,
+    }),
+    h('main', { className: 'flex-1 flex flex-col min-w-0' },
+      h('header', { className: 'h-14 border-b border-border flex items-center justify-between px-3 md:px-5 shrink-0 gap-2' },
+        h('div', { className: 'flex items-center gap-2 min-w-0' },
+          h('button', {
+            type: 'button',
+            onClick: () => setMobileOpen(true),
+            className: 'mobile-sidebar-toggle p-2 -ml-1 rounded-md hover:bg-surface-hover text-muted shrink-0'
+          }, h(I.menu)),
+          h('div', { className: 'text-[13px] font-medium tracking-tight text-foreground/80 truncate' },
+            messages.length === 0 ? 'New conversation' : (messages[0]?.content || '').slice(0, 60)
+          )
+        ),
+        h('div', { className: 'text-[11px] text-muted flex items-center gap-3' },
+          lastPdfData && lastPdfData.pdf && lastPdfData.markdown_basename && h('button', {
+            onClick: () => {
+              window.open(`/api/reports/${lastPdfData.markdown_basename}/pdf`, '_blank');
+            },
+            className: 'text-[11px] text-primary hover:underline'
+          }, '\u2B07 PDF'),
+          mode === 'research' && h('span', { className: 'text-[11px] text-muted' }, 'Engine: LangGraph')
+        )
+      ),
+      h('div', { ref: scrollRef, className: 'flex-1 overflow-y-auto scroll-thin' },
+        messages.length === 0
+          ? h('div', { className: 'h-full flex items-center justify-center' }, h(EmptyState, { onPick: (q) => setInput(q) }))
+          : h('div', { className: 'max-w-3xl mx-auto w-full px-5 py-8 space-y-7' },
+              messages.map((m, i) => m.role === 'user'
+                ? h(UserMessage, { key: m.id, content: m.content })
+                : h(AssistantMessage, {
+                    key: m.id,
+                    message: m,
+                    onRegenerate: m.status === 'complete' && mode !== 'chat' ? () => regenerate(i) : undefined
+                  })
+              )
+            )
+      ),
+      h('div', { className: 'px-4 pb-4 pt-2' },
+        sessionDocs.length > 0 && h('div', { className: 'max-w-3xl mx-auto w-full flex flex-wrap gap-1.5 mb-2 px-1' },
+          sessionDocs.map(name => h('span', { key: name, className: 'source-chip' }, `\u{1F4C4} ${name}`))
+        ),
+        uploadStatus && h('div', { className: 'max-w-3xl mx-auto w-full px-1 mb-1.5 text-[11.5px]' },
+          uploadStatus.state === 'uploading' && h('span', { className: 'text-muted' }, `Uploading ${uploadStatus.name}\u2026`),
+          uploadStatus.state === 'done' && h('span', { className: 'text-primary' }, `\u2713 ${uploadStatus.name} added to this chat`),
+          uploadStatus.state === 'error' && h('span', { style: { color: '#e05a5a' } }, `\u26A0 ${uploadStatus.name}: ${uploadStatus.message || 'upload failed'}`)
+        ),
+        h(InputBar, {
+          value: input,
+          onChange: setInput,
+          onSubmit: () => handleSubmit(),
+          onStop: stop,
+          isStreaming: streaming,
+          mode,
+          voiceOut,
+          onModeChange: setMode,
+          onVoiceOutChange: setVoiceOut,
+          onUploadClick: handleUpload,
+        })
+      )
+    )
+  );
+}
+
+createRoot(document.getElementById('root')).render(h(App));
+</script>
+</body>
+</html>
